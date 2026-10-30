@@ -307,28 +307,129 @@ function peerOptions() {
 function send(conn, msg) { if (conn.open) { try { conn.send(msg); } catch {} } }
 function broadcast(msg) { for (const c of conns.values()) send(c, msg); }
 
+const MAX_PLAYERS = +qs.get('max') || 6;   // ?max= only used for testing
+const doorId = () => 'tvhead-' + roomCode;
+let door = null;              // a second Peer that owns the room code; one player holds it at a time
+let holdingDoor = false;
+let claiming = false;
+let joinedAt = 0;
+const pending = new Map();    // peerId -> time we started connecting
+const doorHolders = new Set();
+
 function setupConn(conn) {
   conn.on('open', () => {
+    pending.delete(conn.peer);
+    const old = conns.get(conn.peer);
     conns.set(conn.peer, conn);
+    if (old && old !== conn) { try { old.close(); } catch {} }   // duplicate link – keep the newest
     ensureRemote(conn.peer);
     send(conn, { t: 'hi', name: myName, color: myColor });
-    if (peer.id === 'tvhead-' + roomCode) {
-      // host: tell newcomer who else is here
-      send(conn, { t: 'peers', ids: [...conns.keys()].filter((k) => k !== conn.peer) });
-    }
-    setStatus(`${conns.size + 1} player${conns.size ? 's' : ''} in room ${roomCode}`);
+    updateStatus();
   });
   conn.on('data', (m) => onData(conn.peer, m));
-  conn.on('close', () => { removeRemote(conn.peer); toast('A player left'); });
+  conn.on('close', () => {
+    pending.delete(conn.peer);
+    if (conns.get(conn.peer) !== conn) return;   // a replaced duplicate, not a real leave
+    const p = remotes.get(conn.peer);
+    toast(`${p && p.name !== '…' ? p.name : 'A player'} left`);
+    doorHolders.delete(conn.peer);
+    removeRemote(conn.peer);
+    updateStatus();
+  });
   conn.on('error', () => {});
 }
 
 function connectTo(id) {
-  if (conns.has(id) || id === peer.id) return;
+  if (!id || conns.has(id) || id === peer.id) return;
+  if (performance.now() - (pending.get(id) || -1e9) < 10000) return;
+  pending.set(id, performance.now());
   const conn = peer.connect(id, { serialization: 'json' });
   setupConn(conn);
   const call = peer.call(id, localStream);
   if (call) setupCall(call);
+}
+
+// The "door" answers newcomers with the list of everyone in the room (or "full").
+function openDoor(onOpen, onTaken) {
+  const d = new Peer(doorId(), peerOptions());
+  d.on('open', () => { door = d; holdingDoor = true; updateScores(); onOpen && onOpen(); });
+  d.on('error', (err) => {
+    if (err.type === 'unavailable-id') { d.destroy(); onTaken && onTaken(); }
+    else console.warn('door error', err.type);
+  });
+  d.on('connection', (c) => {
+    c.on('open', () => {
+      const ids = [peer.id, ...conns.keys()];
+      send(c, ids.length >= MAX_PLAYERS ? { t: 'full' } : { t: 'roster', ids });
+      setTimeout(() => { try { c.close(); } catch {} }, 1500);
+    });
+    c.on('error', () => {});
+  });
+  d.on('disconnected', () => { if (!d.destroyed) d.reconnect(); });
+}
+
+// Every few seconds: share who we're connected to (fixes players who joined at the same moment),
+// and if nobody holds the room code any more (host left), the longest-standing id takes it over.
+let knocking = false;
+setInterval(() => {
+  if (!started || !peer || !peer.open) return;
+  const now = performance.now();
+  // heartbeat: players we haven't heard from in 8 s have gone (closed tab, lost signal)
+  for (const [id, p] of [...remotes]) {
+    if (now - p.lastMsg > 8000) {
+      const c = conns.get(id);
+      doorHolders.delete(id);
+      removeRemote(id);
+      try { c && c.close(); } catch {}
+      toast(`${p.name !== '…' ? p.name : 'A player'} left`);
+      updateStatus();
+    }
+  }
+  broadcast({ t: 'peers', ids: [...conns.keys()], door: holdingDoor ? 1 : 0 });
+  if (now - joinedAt < 7000 || holdingDoor || claiming || knocking) return;
+  if (conns.size === 0) {
+    // on our own (e.g. phone was locked): knock on the room again, or take it over if it's empty
+    knocking = true;
+    knock((r) => {
+      knocking = false;
+      if (r.t === 'roster') { for (const id of r.ids) connectTo(id); }
+      else if (r === 'missing' || r === 'timeout') claimDoor();
+    });
+    return;
+  }
+  if (doorHolders.size === 0) {
+    const all = [peer.id, ...conns.keys()].sort();
+    if (all[0] === peer.id) claimDoor();
+  }
+}, 3000);
+
+function claimDoor() {
+  claiming = true;
+  openDoor(() => { claiming = false; if (conns.size) toast(`You’re now hosting room ${roomCode}`); }, () => { claiming = false; });
+}
+
+// Ask whoever holds the room code for the player list. Calls back with the reply,
+// or 'missing' (nobody holds the code) / 'timeout'.
+let knockFail = null;
+function knock(done) {
+  let finished = false;
+  const c = peer.connect(doorId(), { serialization: 'json' });
+  const finish = (r) => {
+    if (finished) return; finished = true;
+    clearTimeout(timer); knockFail = null;
+    try { c.close(); } catch {}
+    done(r);
+  };
+  const timer = setTimeout(() => finish('timeout'), 8000);
+  knockFail = () => finish('missing');
+  c.on('data', finish);
+  c.on('error', () => {});
+}
+
+function updateStatus() {
+  const n = conns.size + 1;
+  setStatus(`${n} player${n > 1 ? 's' : ''} in room ${roomCode}`);
+  updateScores();
 }
 
 function setupCall(call) {
@@ -353,7 +454,10 @@ function onData(from, m) {
       updateScores();
       break;
     case 'peers':
-      for (const id of m.ids || []) connectTo(id);
+      if (m.door) doorHolders.add(from); else doorHolders.delete(from);
+      // the lower id dials, so two players never call each other at the same time
+      for (const id of m.ids || []) if (!conns.has(id) && id !== peer.id && peer.id < id) connectTo(id);
+      updateScores();
       break;
     case 's':
       p.target.x = m.x; p.target.z = m.z; p.target.r = m.r; p.target.y = m.y;
@@ -484,9 +588,8 @@ function makeCode() {
 
 function onPeerError(err) {
   console.warn('peer error', err.type, err);
-  if (err.type === 'unavailable-id') { setStatus('That room code is taken – trying another…'); peer.destroy(); host(); }
-  else if (err.type === 'peer-unavailable') {
-    if (!conns.size) { setStatus('Room not found. Check the code.', true); showLobby(); }
+  if (err.type === 'peer-unavailable') {
+    if (String(err.message).includes(doorId()) && knockFail) knockFail();
   }
   else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') setStatus('Can’t reach the lobby server – check your internet.', true);
   else if (err.type === 'browser-incompatible') setStatus('This browser can’t do video calls. Try Chrome or Safari.', true);
@@ -499,7 +602,16 @@ function wirePeer() {
   peer.on('disconnected', () => { if (!peer.destroyed) peer.reconnect(); });
 }
 
+function withMainPeer(cb) {
+  if (peer && peer.open) return cb();
+  if (!peer) { peer = new Peer(undefined, peerOptions()); wirePeer(); }
+  peer.once('open', cb);
+}
+
+let prepared = false;
 async function prepare() {
+  if (prepared) return;
+  prepared = true;
   initAudio();
   myName = ($('name').value.trim() || 'Player').slice(0, 14);
   try { localStorage.setItem('tvhead-name', myName); } catch {}
@@ -513,24 +625,40 @@ async function prepare() {
   }
 }
 
+let busy = false;
 async function host() {
-  if (!peer) await prepare();
+  if (busy) return; busy = true;
+  await prepare();
   roomCode = makeCode();
   setStatus('Creating room…');
-  peer = new Peer('tvhead-' + roomCode, peerOptions());
-  wirePeer();
-  peer.on('open', () => { startGame(); setStatus(`Room ${roomCode} – waiting for players`); });
+  withMainPeer(() => openDoor(
+    () => { busy = false; joinedAt = performance.now(); startGame(); updateStatus(); },
+    () => { busy = false; host(); },                      // code already in use – pick another
+  ));
 }
 
 async function join() {
   const code = $('code').value.trim().toUpperCase();
   if (code.length !== 4) { setStatus('Enter the 4-letter room code', true); return; }
+  if (busy) return; busy = true;
   await prepare();
   roomCode = code;
   setStatus('Joining…');
-  peer = new Peer(undefined, peerOptions());
-  wirePeer();
-  peer.on('open', () => { connectTo('tvhead-' + roomCode); startGame(); });
+  withMainPeer(() => tryJoin(0));
+}
+
+function tryJoin(attempt) {
+  knock((r) => {
+    if (r.t === 'full') { busy = false; setStatus(`Room ${roomCode} is full (${MAX_PLAYERS} players max).`, true); return; }
+    if (r.t === 'roster') {
+      busy = false; joinedAt = performance.now(); startGame();
+      for (const id of r.ids) connectTo(id);
+      updateStatus(); return;
+    }
+    // nobody answering – the host may be handing over, so try a few more times
+    if (attempt < 4) { setStatus('Looking for room…'); setTimeout(() => tryJoin(attempt + 1), 3000); }
+    else { busy = false; setStatus('Room not found. Check the code.', true); }
+  });
 }
 
 function startGame() {
@@ -552,8 +680,8 @@ function toast(t) {
 function buzz() { try { navigator.vibrate && navigator.vibrate(120); } catch {} }
 
 function updateScores() {
-  const rows = [{ name: myName + ' (you)', score: me.score, color: myColor }];
-  for (const p of remotes.values()) rows.push({ name: p.name, score: p.score, color: p.color ?? 0xaaaaaa });
+  const rows = [{ name: (holdingDoor ? '👑 ' : '') + myName + ' (you)', score: me.score, color: myColor }];
+  for (const p of remotes.values()) rows.push({ name: (doorHolders.has(p.id) ? '👑 ' : '') + p.name, score: p.score, color: p.color ?? 0xaaaaaa });
   rows.sort((a, b) => b.score - a.score);
   $('scores').innerHTML = rows.map((r) =>
     `<div><span class="dot" style="background:#${r.color.toString(16).padStart(6, '0')}"></span>${escapeHtml(r.name)}<b>${r.score}</b></div>`).join('');
@@ -766,7 +894,7 @@ function frame(now) {
     if (b.life <= 0) { scene.remove(b.m); b.m.geometry.dispose(); beams.splice(i, 1); }
   }
 
-  renderer.render(scene, camera);
+  if (!qs.has('norender')) renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
 
@@ -777,4 +905,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { remotes, me, conns, get audioCtx() { return audioCtx; } };
+window.__tv = { remotes, me, conns, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };

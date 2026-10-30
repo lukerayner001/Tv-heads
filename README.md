@@ -2,7 +2,7 @@
 
 A browser multiplayer 3D game where every player is a character with a TV for a head, and the TV screen shows that player's live webcam.
 
-**Play:** open the GitHub Pages link for this repo, tap **Host a new game**, and share the 4‑letter room code (or the *Copy invite* link). Works on PC and phone (front camera). Up to ~4 players.
+**Play:** open the GitHub Pages link for this repo, tap **Host a new game**, and share the 4‑letter room code (or the *Copy invite* link). Works on PC and phone (front camera). Up to 6 players (rooms are capped). If the host leaves, another player automatically takes over the room code, and anyone who drops out rejoins on their own.
 
 ## Controls
 | | Keyboard | Gamepad | Phone |
