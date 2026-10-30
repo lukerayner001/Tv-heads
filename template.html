@@ -32,6 +32,8 @@
   #hud { position: fixed; inset: 0; pointer-events: none; }
   #room { position: absolute; top: max(10px, env(safe-area-inset-top)); left: 10px; background: rgba(0,0,0,.5); border-radius: 12px; padding: 8px 12px; font-size: 14px; pointer-events: auto; display: flex; gap: 10px; align-items: center; }
   #roomcode { font-weight: 800; letter-spacing: 3px; font-size: 18px; color: #ffb703; }
+  #micBtn { padding: 6px 10px; font-size: 15px; background: #2a9d8f; border-radius: 8px; }
+  #micBtn.off { background: #e63946; }
   #copyBtn { padding: 6px 10px; font-size: 13px; background: #5a4fcf; border-radius: 8px; }
   #scores { position: absolute; top: max(10px, env(safe-area-inset-top)); right: 10px; background: rgba(0,0,0,.5); border-radius: 12px; padding: 8px 12px; font-size: 14px; min-width: 150px; }
   #scores div { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
@@ -72,15 +74,15 @@
     <input id="code" maxlength="4" placeholder="ABCD" autocomplete="off" autocapitalize="characters">
     <button class="big join" id="joinBtn">Join game</button>
     <div id="status"></div>
-    <div class="help">Allow camera access when asked. Video goes straight between players — nothing is recorded.</div>
+    <div class="help">Allow camera and microphone when asked. You hear people louder the closer they are — headphones stop echo. Video and voice go straight between players; nothing is recorded.</div>
   </div>
 </div>
 
 <div id="hud" class="hidden">
-  <div id="room">Room <span id="roomcode"></span><button id="copyBtn">Copy invite</button></div>
+  <div id="room">Room <span id="roomcode"></span><button id="copyBtn">Copy invite</button><button id="micBtn" title="Mute mic (M)">🎤</button></div>
   <div id="scores"></div>
   <div id="selfwrap"><video id="selfview" muted playsinline autoplay></video></div>
-  <div class="keys">W/S move · A/D turn · Space jump · F zap · gamepad works too</div>
+  <div class="keys">W/S move · A/D turn · Space jump · F zap · M mute · gamepad works too</div>
 </div>
 
 <div id="touch" class="hidden">

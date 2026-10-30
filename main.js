@@ -217,11 +217,11 @@ function makeTVHead(color, name) {
   return { group: g, screenMat, legL, legR, armL, armR, label };
 }
 
-function setLabel(p, name) {
-  if (p.name === name) return;
-  p.name = name;
+function setLabel(p, name, muted = p.muted) {
+  if (p.name === name && p.muted === muted) return;
+  p.name = name; p.muted = muted;
   p.parts.group.remove(p.parts.label);
-  p.parts.label = makeLabel(name);
+  p.parts.label = makeLabel(muted ? name + ' 🔇' : name);
   p.parts.group.add(p.parts.label);
 }
 
@@ -277,6 +277,7 @@ function removeRemote(id) {
   const p = remotes.get(id);
   if (p) {
     scene.remove(p.parts.group);
+    stopVoice(p);
     if (p.video) { p.video.video.srcObject = null; p.video.video.remove(); p.video.tex.dispose(); }
     remotes.delete(id);
   }
@@ -334,6 +335,7 @@ function setupCall(call) {
   calls.set(call.peer, call);
   call.on('stream', (stream) => {
     const p = ensureRemote(call.peer);
+    attachVoice(p, stream);
     if (p.video) return;
     p.video = attachVideoToScreen(p.parts.screenMat, stream, false);
   });
@@ -357,6 +359,7 @@ function onData(from, m) {
       p.target.x = m.x; p.target.z = m.z; p.target.r = m.r; p.target.y = m.y;
       if (!p.seen) { p.pos.set(m.x, 0, m.z); p.rot = m.r; p.seen = true; }
       p.stunned = !!m.st;
+      if (!!m.mu !== !!p.muted) setLabel(p, p.name, !!m.mu);
       if (p.score !== m.sc) { p.score = m.sc; updateScores(); }
       break;
     case 'zap':
@@ -372,23 +375,106 @@ function onData(from, m) {
   }
 }
 
+const VIDEO_C = { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 20, max: 24 } };
+const AUDIO_C = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+let micTrack = null;
+let micMuted = false;
+
+async function tryMedia(c) { try { return await navigator.mediaDevices.getUserMedia(c); } catch { return null; } }
+
 async function getCamera() {
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 20, max: 24 } },
-      audio: false,
-    });
-    $('selfview').srcObject = localStream;
-    $('selfview').play().catch(() => {});
-    return true;
-  } catch (e) {
-    // No camera: send the NO SIGNAL card as our video so connections still work.
-    const s = cardCanvas.captureStream ? cardCanvas.captureStream(5) : null;
-    localStream = s;
-    $('selfwrap').classList.add('nocam');
-    toast('No camera – you’ll show NO SIGNAL');
-    return false;
+  let s = await tryMedia({ video: VIDEO_C, audio: AUDIO_C });
+  let vTrack = s?.getVideoTracks()[0] || null;
+  let aTrack = s?.getAudioTracks()[0] || null;
+  if (!s) {                                   // one of them was refused / missing – try separately
+    vTrack = (await tryMedia({ video: VIDEO_C }))?.getVideoTracks()[0] || null;
+    aTrack = (await tryMedia({ audio: AUDIO_C }))?.getAudioTracks()[0] || null;
   }
+  if (vTrack) {
+    $('selfview').srcObject = new MediaStream([vTrack]);
+    $('selfview').play().catch(() => {});
+  } else {
+    // No camera: send the NO SIGNAL card as our video so connections still work.
+    vTrack = cardCanvas.captureStream ? cardCanvas.captureStream(5).getVideoTracks()[0] : null;
+    $('selfwrap').classList.add('nocam');
+  }
+  micTrack = aTrack;
+  localStream = new MediaStream([vTrack, aTrack].filter(Boolean));
+  if (!aTrack) { $('micBtn').classList.add('off'); $('micBtn').textContent = '🎤✕'; }
+  if (!$('selfwrap').classList.contains('nocam') && aTrack) return true;
+  toast(!vTrack || $('selfwrap').classList.contains('nocam') ? (aTrack ? 'No camera – voice only' : 'No camera or mic') : 'No mic – others won’t hear you');
+  return false;
+}
+
+function setMic(muted) {
+  if (!micTrack) { toast('No microphone available'); return; }
+  micMuted = muted;
+  micTrack.enabled = !muted;
+  $('micBtn').classList.toggle('off', muted);
+  $('micBtn').textContent = muted ? '🔇' : '🎤';
+  toast(muted ? 'Mic muted' : 'Mic on');
+}
+
+// ---------- proximity voice ----------
+let audioCtx = null;
+const VOICE_NEAR = 4, VOICE_FAR = 22;
+function initAudio() {
+  if (audioCtx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  audioCtx = new AC();
+  audioCtx.resume().catch(() => {});
+  // iOS needs a resume inside a gesture; keep trying on taps.
+  const kick = () => { if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {}); };
+  addEventListener('pointerdown', kick); addEventListener('keydown', kick);
+}
+
+function attachVoice(p, stream) {
+  if (p.voice || !stream.getAudioTracks().length) return;
+  if (audioCtx) {
+    const src = audioCtx.createMediaStreamSource(stream);
+    const gain = audioCtx.createGain(); gain.gain.value = 0;
+    const pan = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+    const an = audioCtx.createAnalyser(); an.fftSize = 256;
+    src.connect(an);
+    src.connect(gain);
+    if (pan) { gain.connect(pan); pan.connect(audioCtx.destination); } else gain.connect(audioCtx.destination);
+    p.voice = { src, gain, pan, an, buf: new Uint8Array(an.fftSize) };
+  } else {
+    // very old browsers: plain element, volume only
+    const a = new Audio(); a.srcObject = stream; a.autoplay = true; a.play().catch(() => {});
+    videoHolder.appendChild(a);
+    p.voice = { el: a };
+  }
+}
+
+function updateVoice(p) {
+  if (!p.voice) return;
+  const dx = p.pos.x - me.pos.x, dz = p.pos.z - me.pos.z;
+  const d = Math.hypot(dx, dz);
+  let vol = d <= VOICE_NEAR ? 1 : d >= VOICE_FAR ? 0 : 1 - (d - VOICE_NEAR) / (VOICE_FAR - VOICE_NEAR);
+  vol = vol * vol;                                           // falls off more naturally
+  if (!p.seen || p.parts.screenMat.uniforms.power.value < 0.3) vol = 0;
+  p.vol = vol;
+  if (p.voice.el) { p.voice.el.volume = vol; return; }
+  const t = audioCtx.currentTime;
+  p.voice.gain.gain.setTargetAtTime(vol, t, 0.08);
+  if (p.voice.pan) {
+    const rx = -Math.cos(me.rot), rz = Math.sin(me.rot);    // listener's right
+    const side = d > 0.01 ? (dx * rx + dz * rz) / d : 0;
+    p.voice.pan.pan.setTargetAtTime(side * 0.8, t, 0.08);
+  }
+  // talking indicator
+  const an = p.voice.an; an.getByteTimeDomainData(p.voice.buf);
+  let peak = 0; for (const v of p.voice.buf) peak = Math.max(peak, Math.abs(v - 128));
+  p.talking = peak > 10 && !p.muted;
+}
+
+function stopVoice(p) {
+  if (!p.voice) return;
+  if (p.voice.el) p.voice.el.remove();
+  else { p.voice.src.disconnect(); p.voice.gain.disconnect(); p.voice.pan?.disconnect(); }
+  p.voice = null;
 }
 
 function makeCode() {
@@ -414,6 +500,7 @@ function wirePeer() {
 }
 
 async function prepare() {
+  initAudio();
   myName = ($('name').value.trim() || 'Player').slice(0, 14);
   try { localStorage.setItem('tvhead-name', myName); } catch {}
   setStatus('Starting camera…');
@@ -474,6 +561,7 @@ function updateScores() {
 function escapeHtml(s) { return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 $('hostBtn').onclick = () => host();
+$('micBtn').onclick = () => setMic(!micMuted);
 $('joinBtn').onclick = () => join();
 $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
 try { $('name').value = localStorage.getItem('tvhead-name') || ''; } catch {}
@@ -489,6 +577,7 @@ const keys = new Set();
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   keys.add(e.code);
+  if (e.code === 'KeyM' && started && !e.repeat) setMic(!micMuted);
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -631,7 +720,7 @@ function frame(now) {
     sendTimer += dt;
     if (sendTimer > 1 / 15) {
       sendTimer = 0;
-      broadcast({ t: 's', x: +me.pos.x.toFixed(2), z: +me.pos.z.toFixed(2), r: +me.rot.toFixed(3), y: +me.y.toFixed(2), st: stunned ? 1 : 0, sc: me.score });
+      broadcast({ t: 's', x: +me.pos.x.toFixed(2), z: +me.pos.z.toFixed(2), r: +me.rot.toFixed(3), y: +me.y.toFixed(2), st: stunned ? 1 : 0, sc: me.score, mu: micMuted || !micTrack ? 1 : 0 });
     }
   } else {
     // lobby: slow orbit
@@ -658,6 +747,8 @@ function frame(now) {
     // power-off look if we haven't heard from them for a while
     const quiet = now - p.lastMsg > 4000;
     u.power.value += ((quiet ? 0 : 1) - u.power.value) * Math.min(1, dt * 6);
+    updateVoice(p);
+    p.parts.label.material.color.setHex(p.talking ? 0x9dff9d : 0xffffff);
     if (p.video) {
       const v = p.video.video;
       if (v.videoWidth) u.videoAspect.value = v.videoWidth / v.videoHeight;
@@ -686,4 +777,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { remotes, me, conns };
+window.__tv = { remotes, me, conns, get audioCtx() { return audioCtx; } };

@@ -10,8 +10,11 @@ A browser multiplayer 3D game where every player is a character with a TV for a 
 | Move / turn | W/S, A/D (or arrows) | Left stick | Joystick |
 | Jump | Space | A | JUMP |
 | Zap | F | X / B / RT | ZAP |
+| Mute mic | M | – | 🎤 button |
 
 A zap fills the other player's screen with static and stuns them.
+
+**Proximity voice chat:** you hear other players louder the closer they are (silent beyond ~20 m), panned left/right by where they stand. Headphones avoid echo. A player's name tag glows green while they talk and shows 🔇 when muted.
 
 ## How it works
 - **Three.js** renders the 3D arena. Each player's webcam stream becomes a `VideoTexture` on their TV screen (CRT shader with scanlines and static).
