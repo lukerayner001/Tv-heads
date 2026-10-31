@@ -126,22 +126,26 @@ function makeScreenMaterial() {
       time: { value: 0 },
       staticAmt: { value: 0 },
       power: { value: 1 },
+      alpha: { value: 1 },
+      damage: { value: 0 },
+      crack: { value: crackTex },
     },
     vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
       uniform sampler2D map; uniform sampler2D card; uniform float hasVideo; uniform float videoAspect;
       uniform float time; uniform float staticAmt; uniform float power;
+      uniform float alpha; uniform float damage; uniform sampler2D crack;
       varying vec2 vUv;
       float rnd(vec2 c){ return fract(sin(dot(c, vec2(12.9898,78.233))) * 43758.5453); }
       void main(){
         vec2 c = vUv - 0.5;
         float d = dot(c,c);
         vec2 uv = 0.5 + c * (1.0 + 0.15 * d);            // CRT bulge
-        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { gl_FragColor = vec4(0.02,0.02,0.02,1.0); return; }
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { gl_FragColor = vec4(0.02,0.02,0.02,alpha); return; }
         // power-off: collapse to a horizontal line
         float squash = max(power, 0.001);
         float py = 0.5 + (uv.y - 0.5) / squash;
-        if (py < 0.0 || py > 1.0) { gl_FragColor = vec4(0.02,0.02,0.02,1.0); return; }
+        if (py < 0.0 || py > 1.0) { gl_FragColor = vec4(0.02,0.02,0.02,alpha); return; }
         vec2 suv = vec2(uv.x, py);
         vec2 t = suv;                                       // cover-fit video into 4:3 screen
         float sa = ${SCREEN_ASPECT.toFixed(4)};
@@ -149,11 +153,15 @@ function makeScreenMaterial() {
         else t.y = 0.5 + (t.y - 0.5) * (videoAspect / sa);
         vec3 col = hasVideo > 0.5 ? texture2D(map, t).rgb : texture2D(card, suv).rgb;
         float n = rnd(floor(suv * vec2(160.0,120.0)) + fract(time * 13.7) * 91.0);
-        col = mix(col, vec3(n), staticAmt);
+        col = mix(col, vec3(n), max(staticAmt, damage * 0.12));
+        float gr = dot(col, vec3(0.3, 0.59, 0.11));
+        col = mix(col, vec3(gr), clamp(damage * 1.4, 0.0, 1.0));       // drains colour as it gets damaged
+        vec2 cr = texture2D(crack, suv).rg;
+        col = mix(col, vec3(0.92), max(cr.r * step(0.3, damage), cr.g * step(0.6, damage)));
         col *= 0.86 + 0.14 * sin(suv.y * 480.0);          // scanlines
         col *= 1.0 - d * 1.1;                               // vignette
         col += (1.0 - power) * 0.8;                         // flash when switching off
-        gl_FragColor = vec4(col, 1.0);
+        gl_FragColor = vec4(col, alpha);
       }`,
   });
 }
@@ -339,6 +347,7 @@ function setupConn(conn) {
     if (old && old !== conn) { try { old.close(); } catch {} }   // duplicate link – keep the newest
     ensureRemote(conn.peer);
     send(conn, { t: 'hi', name: myName, color: myColor });
+    if (roundId) send(conn, { t: 'round', rid: roundId, cfg, state: roundState });
     updateStatus();
   });
   conn.on('data', (m) => onData(conn.peer, m));
@@ -420,7 +429,7 @@ setInterval(() => {
 
 function claimDoor() {
   claiming = true;
-  openDoor(() => { claiming = false; if (conns.size) toast(`You’re now hosting room ${roomCode}`); }, () => { claiming = false; });
+  openDoor(() => { claiming = false; if (conns.size) toast(`You’re now hosting room ${roomCode}`); updateFeatureChips(); $('nextRoundBtn').classList.remove('hidden'); $('hostWait').classList.add('hidden'); if (roundState !== 'playing' && !$('waiting').classList.contains('hidden')) showSettings(); }, () => { claiming = false; });
 }
 
 // Ask whoever holds the room code for the player list. Calls back with the reply,
@@ -477,6 +486,7 @@ function setupCall(call) {
 function onData(from, m) {
   const p = ensureRemote(from);
   p.lastMsg = performance.now();
+  if (onRuleData(p, m)) return;
   switch (m.t) {
     case 'hi':
       setLabel(p, String(m.name || 'Player'));
@@ -495,17 +505,14 @@ function onData(from, m) {
       if (!p.seen) { p.pos.set(m.x, 0, m.z); p.rot = m.r; p.seen = true; }
       p.stunned = !!m.st;
       if (!!m.mu !== !!p.muted) setLabel(p, p.name, !!m.mu);
-      if (p.score !== m.sc) { p.score = m.sc; updateScores(); }
+      p.hp = m.hp ?? MAX_HP; p.ko = !!m.ko; p.hidden = !!m.hd;
+      { const sc = m.rd === roundId ? (m.sc | 0) : 0; if (p.score !== sc) { p.score = sc; updateScores(); } }
       break;
     case 'zap':
-      spawnBeam(p.pos, p.rot, p.y, m.len);
+      spawnBeam(p.pos, p.rot, p.y, m.len, m.w || 0);
       break;
     case 'hit':
-      if (performance.now() > me.stunUntil) {
-        me.stunUntil = performance.now() + 1500;
-        toast(`Zapped by ${p.name}!`);
-        buzz();
-      }
+      onHit(p, m);
       break;
   }
 }
@@ -653,7 +660,8 @@ async function prepare() {
     meParts = makeTVHead(myColor, myName);
     meParts.group.remove(meParts.label);
     scene.add(meParts.group);
-    if (localStream && !$('selfwrap').classList.contains('nocam')) attachVideoToScreen(meParts.screenMat, localStream, false);
+    if (localStream && !$('selfwrap').classList.contains('nocam')) meVideo = attachVideoToScreen(meParts.screenMat, localStream, false);
+    ensureMicMeter();
   }
 }
 
@@ -708,6 +716,8 @@ function startGame() {
   $('hud').classList.remove('hidden');
   $('roomcode').textContent = roomCode;
   if (isTouch) $('touch').classList.remove('hidden');
+  if (!roundId) { if (holdingDoor) showSettings(); else $('waiting').classList.remove('hidden'); }
+  updateFeatureChips();
   updateScores();
 }
 function showLobby() { $('lobby').classList.remove('hidden'); $('hud').classList.add('hidden'); $('touch').classList.add('hidden'); started = false; }
@@ -726,6 +736,7 @@ function updateScores() {
   rows.sort((a, b) => b.score - a.score);
   $('scores').innerHTML = rows.map((r) =>
     `<div><span class="dot" style="background:#${r.color.toString(16).padStart(6, '0')}"></span>${escapeHtml(r.name)}<b>${r.score}</b></div>`).join('');
+  checkWin();
 }
 function escapeHtml(s) { return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
@@ -803,36 +814,426 @@ function readInput() {
 // ---------- zap beams ----------
 const beams = [];
 const beamMat = new THREE.MeshBasicMaterial({ color: 0xfff176, transparent: true, opacity: 0.9 });
-function spawnBeam(pos, rot, y, len = 14) {
-  const geo = new THREE.CylinderGeometry(0.08, 0.08, len, 6);
+function spawnBeam(pos, rot, y, len = 14, power = 0) {
+  const r = 0.08 + 0.22 * power;
+  const geo = new THREE.CylinderGeometry(r, r, len, 6);
   geo.rotateX(Math.PI / 2); geo.translate(0, 0, len / 2);
   const m = new THREE.Mesh(geo, beamMat.clone());
+  if (power > 0.3) m.material.color.setHex(0xff9f1c);
   m.position.set(pos.x + Math.sin(rot) * 0.55, 2.3 + y, pos.z + Math.cos(rot) * 0.55);
   m.rotation.y = rot;
   scene.add(m);
   beams.push({ m, life: 0.25 });
 }
 
-function tryZap() {
+function tryZap(power = 0) {
+  if (me.hidden) { toast('👻 Uncover your camera to zap'); return; }
+  const range = 16 + 12 * power;
   const fx = Math.sin(me.rot), fz = Math.cos(me.rot);
-  let best = null, bestD = 16;
+  let best = null, bestD = range;
   for (const p of remotes.values()) {
-    if (!p.seen) continue;
+    if (!p.seen || p.hidden || p.ko) continue;
     const dx = p.pos.x - me.pos.x, dz = p.pos.z - me.pos.z;
     const d = Math.hypot(dx, dz);
     if (d < 0.1 || d > bestD) continue;
     if ((dx * fx + dz * fz) / d < 0.975) continue;
     best = p; bestD = d;
   }
-  const len = best ? bestD : 16;
-  spawnBeam(me.pos, me.rot, me.y, len);
-  broadcast({ t: 'zap', len });
+  const len = best ? bestD : range;
+  spawnBeam(me.pos, me.rot, me.y, len, power);
+  broadcast({ t: 'zap', len, w: +power.toFixed(2) });
   if (best && !best.stunned) {
     const c = conns.get(best.id);
-    if (c) send(c, { t: 'hit' });
-    me.score++;
-    updateScores();
+    if (c) send(c, { t: 'hit', rd: roundId });
+    zapCam(best);
+    if (playing() && !cfg.damage) { me.score++; updateScores(); }
   }
+}
+
+// =====================================================================
+// ---------- rounds, host settings and camera/voice features ----------
+// =====================================================================
+const FEATURES = [
+  ['damage', '💥 Screen damage', '3 hits knock a TV out. Knockouts score.'],
+  ['hide', '👻 Cover to hide', 'Cover your camera to go invisible (no zapping while hidden).'],
+  ['zapcam', '📸 Zap cam', 'Snap a photo of every face you zap – gallery at the end.'],
+  ['billboards', '🏆 Leader billboards', 'Giant screens show whoever’s winning.'],
+  ['mouth', '😮 Mouth to fire', 'Open your mouth wide to shoot.'],
+  ['laugh', '😂 Try not to laugh', 'Smile and the nearest player gets a point.'],
+  ['freeze', '🗿 Freeze!', 'When FREEZE! is called, move – or your face moves – and lose a point.'],
+  ['shout', '📣 Shout power', 'The louder you shout as you zap, the further it goes.'],
+];
+const DEFAULT_CFG = { target: 10, damage: true, hide: true, zapcam: true, billboards: true, mouth: false, laugh: false, freeze: false, shout: false };
+const MAX_HP = 3;
+let cfg = { ...DEFAULT_CFG };
+let roundId = 0;
+let roundState = 'setup';          // setup | playing | ended
+const zapPhotos = [];
+me.hp = MAX_HP; me.koUntil = 0; me.hidden = false;
+const playing = () => roundState === 'playing';
+
+// ----- settings panel (host) -----
+function savedCfg() { try { return { ...DEFAULT_CFG, ...JSON.parse(localStorage.getItem('tvhead-cfg') || '{}') }; } catch { return { ...DEFAULT_CFG }; } }
+function buildSettings() {
+  const c = savedCfg();
+  $('featureList').innerHTML = FEATURES.map(([k, name, desc]) =>
+    `<label class="feat"><input type="checkbox" data-k="${k}" ${c[k] ? 'checked' : ''}><span><b>${name}</b><small>${desc}</small></span></label>`).join('');
+  $('target').value = String(c.target);
+}
+function readSettings() {
+  const c = { target: +$('target').value || 10 };
+  for (const el of $('featureList').querySelectorAll('input')) c[el.dataset.k] = el.checked;
+  try { localStorage.setItem('tvhead-cfg', JSON.stringify(c)); } catch {}
+  return c;
+}
+function showSettings() { buildSettings(); hideOverlays(); $('settings').classList.remove('hidden'); }
+function hideOverlays() { for (const id of ['settings', 'results', 'waiting']) $(id).classList.add('hidden'); }
+$('startRoundBtn').onclick = () => startRound();
+$('settingsBtn').onclick = () => showSettings();
+$('closeSettingsBtn').onclick = () => { $('settings').classList.add('hidden'); if (!playing()) $('waiting').classList.remove('hidden'); };
+$('nextRoundBtn').onclick = () => showSettings();
+$('keepPlayingBtn').onclick = () => $('results').classList.add('hidden');
+
+function startRound() {
+  const m = { t: 'round', rid: Date.now(), cfg: readSettings(), state: 'playing' };
+  applyRound(m);
+  broadcast(m);
+}
+
+function applyRound(m) {
+  if (!m.rid || m.rid <= roundId) return;
+  roundId = m.rid;
+  cfg = { ...DEFAULT_CFG, ...m.cfg };
+  me.score = 0; me.hp = MAX_HP; me.koUntil = 0; me.stunUntil = 0;
+  zapPhotos.length = 0;
+  for (const p of remotes.values()) p.score = 0;
+  roundState = m.state === 'ended' ? 'ended' : 'playing';
+  nextFreezeAt = performance.now() + 12000 + Math.random() * 10000;
+  hideOverlays();
+  if (roundState === 'playing') toast(`Round on! First to ${cfg.target}`);
+  else $('waiting').classList.remove('hidden');
+  if (cfg.mouth || cfg.laugh) ensureFace();
+  updateFeatureChips();
+  updateScores();
+}
+
+function updateFeatureChips() {
+  const on = FEATURES.filter(([k]) => cfg[k]).map(([, n]) => n.split(' ')[0]).join(' ');
+  $('chips').textContent = roundId ? `First to ${cfg.target} ${on}` : 'Warm-up';
+  $('settingsBtn').classList.toggle('hidden', !holdingDoor);
+  $('zapBtn').textContent = cfg.mouth && face ? '😮' : 'ZAP';
+}
+
+function checkWin() {
+  if (!playing()) return;
+  const all = [{ name: myName, score: me.score, mine: true }, ...[...remotes.values()].map((p) => ({ name: p.name, score: p.score }))];
+  const w = all.find((r) => r.score >= cfg.target);
+  if (w) endRound(w);
+}
+
+function endRound(w) {
+  roundState = 'ended';
+  updateScores();
+  hideOverlays();
+  $('winner').textContent = w.mine ? '🏆 You win!' : `🏆 ${w.name} wins!`;
+  $('finalScores').innerHTML = $('scores').innerHTML;
+  $('gallery').innerHTML = zapPhotos.length
+    ? zapPhotos.map((p) => `<figure><img src="${p.src}"><figcaption>${escapeHtml(p.caption)}</figcaption></figure>`).join('')
+    : (cfg.zapcam ? '<p class="muted">No zap-cam photos this round.</p>' : '');
+  $('galleryTitle').classList.toggle('hidden', !cfg.zapcam);
+  $('nextRoundBtn').classList.toggle('hidden', !holdingDoor);
+  $('hostWait').classList.toggle('hidden', holdingDoor);
+  $('results').classList.remove('hidden');
+}
+
+// ----- camera sampler: brightness (hide) + motion (freeze) -----
+const sampCanvas = document.createElement('canvas');
+sampCanvas.width = 16; sampCanvas.height = 12;
+const sampCtx = sampCanvas.getContext('2d', { willReadFrequently: true });
+let prevLum = null, camMotion = 0, darkCount = 0, sampT = 0;
+function sampleCamera(now) {
+  if (now - sampT < 150) return;
+  sampT = now;
+  const v = $('selfview');
+  const hasCam = !$('selfwrap').classList.contains('nocam') && v.readyState >= 2;
+  let dark = false;
+  if (window.__tv.fakeDark !== undefined) dark = window.__tv.fakeDark;
+  else if (hasCam) {
+    sampCtx.drawImage(v, 0, 0, 16, 12);
+    const d = sampCtx.getImageData(0, 0, 16, 12).data;
+    const lum = new Float32Array(192);
+    let sum = 0;
+    for (let i = 0; i < 192; i++) { lum[i] = d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11; sum += lum[i]; }
+    const mean = sum / 192;
+    let vr = 0, diff = 0;
+    for (let i = 0; i < 192; i++) { vr += (lum[i] - mean) ** 2; if (prevLum) diff += Math.abs(lum[i] - prevLum[i]); }
+    const std = Math.sqrt(vr / 192);
+    camMotion = prevLum ? diff / 192 : 0;
+    prevLum = lum;
+    dark = mean < 30 && std < 14;          // a hand over the lens: dark and flat
+  }
+  if (window.__tv.fakeMotion !== undefined) camMotion = window.__tv.fakeMotion;
+  darkCount = dark ? darkCount + 1 : 0;
+  const wantHidden = cfg.hide && playing() && darkCount >= 2;
+  if (wantHidden !== me.hidden) { me.hidden = wantHidden; toast(wantHidden ? '👻 Hidden! Uncover to zap' : 'Visible again'); }
+}
+
+// ----- opacity for hidden players -----
+function setOpacity(parts, o) {
+  if (parts.opacity === o) return;
+  parts.opacity = o;
+  parts.group.traverse((m) => {
+    if (!m.material) return;
+    if (m.material.uniforms && m.material.uniforms.alpha) { m.material.uniforms.alpha.value = o; m.material.transparent = o < 1; }
+    else { m.material.transparent = o < 1; m.material.opacity = o; }
+    m.castShadow = o >= 1;
+  });
+}
+
+// ----- zap cam -----
+const snapCanvas = document.createElement('canvas');
+snapCanvas.width = 240; snapCanvas.height = 180;
+function zapCam(p) {
+  if (!cfg.zapcam || !p.video || !p.video.video.videoWidth) return;
+  const v = p.video.video, g = snapCanvas.getContext('2d');
+  const va = v.videoWidth / v.videoHeight, ca = 4 / 3;
+  let sw = v.videoWidth, sh = v.videoHeight, sx = 0, sy = 0;
+  if (va > ca) { sw = sh * ca; sx = (v.videoWidth - sw) / 2; } else { sh = sw / ca; sy = (v.videoHeight - sh) / 2; }
+  g.drawImage(v, sx, sy, sw, sh, 0, 0, 240, 180);
+  const src = snapCanvas.toDataURL('image/jpeg', 0.75);
+  zapPhotos.push({ src, caption: `${myName} zapped ${p.name}` });
+  if (zapPhotos.length > 24) zapPhotos.shift();
+  const pop = $('snapPop');
+  pop.src = src; pop.classList.remove('show'); void pop.offsetWidth; pop.classList.add('show');
+}
+
+// ----- screen-damage cracks -----
+const crackCanvas = document.createElement('canvas');
+crackCanvas.width = 256; crackCanvas.height = 192;
+{
+  const g = crackCanvas.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, 256, 192);
+  g.globalCompositeOperation = 'lighter';
+  const crack = (color, x, y, n, len) => {
+    g.strokeStyle = color; g.lineWidth = 5; g.lineJoin = 'round';
+    for (let i = 0; i < n; i++) {
+      let a = (i / n) * Math.PI * 2 + Math.random() * 0.6, cx = x, cy = y;
+      g.beginPath(); g.moveTo(cx, cy);
+      for (let s = 0; s < 6; s++) { a += (Math.random() - 0.5) * 0.9; cx += Math.cos(a) * len * (0.5 + Math.random()); cy += Math.sin(a) * len * (0.5 + Math.random()); g.lineTo(cx, cy); }
+      g.stroke();
+    }
+  };
+  crack('#f00', 80, 70, 7, 22);
+  crack('#0f0', 175, 115, 9, 26);
+}
+const crackTex = new THREE.CanvasTexture(crackCanvas);
+
+// ----- leader billboards -----
+const billboards = [];
+{
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x222233, roughness: 0.5 });
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x555577 });
+  const spots = [[0, -(ARENA - 1.2), 0], [0, ARENA - 1.2, Math.PI], [-(ARENA - 1.2), 0, Math.PI / 2], [ARENA - 1.2, 0, -Math.PI / 2]];
+  for (const [x, z, ry] of spots) {
+    const g = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(8.6, 6.6, 0.4), frameMat); box.position.y = 7; g.add(box);
+    for (const s of [-1, 1]) { const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, 4, 0.4), postMat); post.position.set(3 * s, 2, 0); g.add(post); }
+    const mat = makeScreenMaterial();
+    const scr = new THREE.Mesh(new THREE.PlaneGeometry(8, 6), mat); scr.position.set(0, 7, 0.21); g.add(scr);
+    const lbl = makeLabel('LEADER'); lbl.position.set(0, 10.8, 0); lbl.scale.set(6, 1.5, 1); g.add(lbl);
+    g.position.set(x, 0, z); g.rotation.y = ry;
+    scene.add(g);
+    billboards.push({ g, mat, lbl, leader: undefined });
+  }
+}
+let meVideo = null;
+function updateBillboards(time) {
+  const show = cfg.billboards && roundId > 0;
+  let lead = null, best = 0;
+  if (show) {
+    if (me.score > best) { best = me.score; lead = { id: 'me', name: myName, tex: meVideo?.tex, v: meVideo?.video }; }
+    for (const p of remotes.values()) if (p.score > best) { best = p.score; lead = { id: p.id, name: p.name, tex: p.video?.tex, v: p.video?.video }; }
+  }
+  for (const b of billboards) {
+    b.g.visible = show;
+    if (!show) continue;
+    const u = b.mat.uniforms;
+    u.time.value = time;
+    const key = lead ? lead.id + ':' + lead.name : '';
+    if (b.leader !== key) {
+      b.leader = key;
+      b.g.remove(b.lbl); b.lbl = makeLabel(lead ? '👑 ' + lead.name : 'No leader yet'); b.lbl.position.set(0, 10.8, 0); b.lbl.scale.set(6, 1.5, 1); b.g.add(b.lbl);
+      u.map.value = lead && lead.tex ? lead.tex : cardTex;
+      u.hasVideo.value = lead && lead.tex ? 1 : 0;
+    }
+    if (lead && lead.v && lead.v.videoWidth) u.videoAspect.value = lead.v.videoWidth / lead.v.videoHeight;
+  }
+}
+
+// ----- knockouts -----
+function respawn() {
+  me.pos.set((Math.random() - 0.5) * 40, 0, (Math.random() - 0.5) * 40);
+  collide(me.pos);
+  me.hp = MAX_HP;
+}
+
+// ----- freeze! -----
+let nextFreezeAt = Infinity, freeze = null;   // freeze = { start, end, caught }
+function callFreeze() {
+  const m = { t: 'freeze', rd: roundId };
+  broadcast(m);
+  startFreeze();
+}
+function startFreeze() {
+  const now = performance.now();
+  freeze = { start: now, end: now + 3500, graceEnd: now + 900, caught: false };
+  const el = $('freeze'); el.textContent = 'FREEZE!'; el.classList.remove('hidden');
+  buzz();
+}
+function updateFreeze(now, inp) {
+  if (holdingDoor && cfg.freeze && playing() && now > nextFreezeAt) {
+    nextFreezeAt = now + 15000 + Math.random() * 15000;
+    callFreeze();
+  }
+  if (!freeze) return;
+  if (now > freeze.end) {
+    $('freeze').classList.add('hidden');
+    if (!freeze.caught && playing()) toast('Safe! 🗿');
+    freeze = null; return;
+  }
+  if (now < freeze.graceEnd || freeze.caught || me.koUntil > now) return;
+  const moved = Math.abs(inp.fwd) > 0.15 || Math.abs(inp.turn) > 0.15 || inp.jump || inp.zap || camMotion > 9;
+  if (moved) {
+    freeze.caught = true;
+    $('freeze').textContent = 'YOU MOVED!';
+    if (playing()) { me.score = Math.max(0, me.score - 1); updateScores(); }
+    me.stunUntil = now + 1500;
+    buzz();
+  }
+}
+
+// ----- mic loudness (shout power) -----
+let micAnalyser = null, micBuf = null, loud = 0;
+function ensureMicMeter() {
+  if (micAnalyser || !audioCtx || !micTrack) return;
+  const src = audioCtx.createMediaStreamSource(new MediaStream([micTrack]));
+  micAnalyser = audioCtx.createAnalyser(); micAnalyser.fftSize = 512;
+  micBuf = new Float32Array(micAnalyser.fftSize);
+  src.connect(micAnalyser);
+}
+function updateLoudness(dt) {
+  let level = 0;
+  if (window.__tv.fakeLoud !== undefined) level = window.__tv.fakeLoud;
+  else if (micAnalyser && !micMuted) {
+    micAnalyser.getFloatTimeDomainData(micBuf);
+    let s = 0; for (const x of micBuf) s += x * x;
+    level = Math.min(1, Math.sqrt(s / micBuf.length) * 6);
+  }
+  loud = Math.max(level, loud - dt * 1.5);      // hold peaks briefly
+  const meter = $('loudMeter');
+  meter.classList.toggle('hidden', !(cfg.shout && playing()));
+  meter.firstElementChild.style.width = Math.round(loud * 100) + '%';
+}
+
+// ----- face tracking (mouth to fire, try not to laugh) -----
+let face = null, faceLoading = false, lastFace = 0;
+const faceState = { jaw: 0, smile: 0 };
+async function ensureFace() {
+  if (face || faceLoading) return;
+  if ($('selfwrap').classList.contains('nocam') && window.__tv.fakeFace === undefined) { toast('Face features need a camera'); return; }
+  faceLoading = true;
+  toast('Loading face tracking…');
+  const base = qs.get('mpbase') || 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.0';
+  const model = qs.get('mpmodel') || 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+  try {
+    const vision = await import(/* @vite-ignore */ base + '/vision_bundle.mjs');
+    const fileset = await vision.FilesetResolver.forVisionTasks(base + '/wasm');
+    const opts = (delegate) => ({ baseOptions: { modelAssetPath: model, delegate }, runningMode: 'VIDEO', numFaces: 1, outputFaceBlendshapes: true });
+    try { face = await vision.FaceLandmarker.createFromOptions(fileset, opts('GPU')); }
+    catch { face = await vision.FaceLandmarker.createFromOptions(fileset, opts('CPU')); }
+    toast('😮 Face tracking ready');
+  } catch (e) {
+    console.warn('face tracking failed', e);
+    toast('Face tracking isn’t available on this device');
+  }
+  faceLoading = false;
+  updateFeatureChips();
+}
+function updateFace(now) {
+  if (!(cfg.mouth || cfg.laugh) || !playing()) return;
+  if (window.__tv.fakeFace) { Object.assign(faceState, window.__tv.fakeFace); return; }
+  const v = $('selfview');
+  if (!face || v.readyState < 2 || now - lastFace < 70) return;
+  lastFace = now;
+  try {
+    const r = face.detectForVideo(v, now);
+    const cats = r.faceBlendshapes?.[0]?.categories;
+    if (!cats) { faceState.jaw = 0; faceState.smile = 0; return; }
+    const get = (n) => cats.find((c) => c.categoryName === n)?.score || 0;
+    faceState.jaw = get('jawOpen');
+    faceState.smile = (get('mouthSmileLeft') + get('mouthSmileRight')) / 2;
+  } catch {}
+}
+const facePresent = () => !!face || !!window.__tv.fakeFace;
+let mouthWasOpen = false, smileSince = 0, laughCooldown = 0;
+function mouthFire() {
+  const open = faceState.jaw > 0.45;
+  const fire = open && !mouthWasOpen;
+  mouthWasOpen = open;
+  return fire;
+}
+function updateLaugh(now) {
+  if (!cfg.laugh || !playing() || now < laughCooldown) return;
+  if (faceState.smile > 0.55) {
+    if (!smileSince) smileSince = now;
+    if (now - smileSince > 350) {
+      smileSince = 0; laughCooldown = now + 3500;
+      me.stunUntil = now + 1200;
+      let near = null, nd = Infinity;
+      for (const p of remotes.values()) {
+        if (!p.seen) continue;
+        const d = Math.hypot(p.pos.x - me.pos.x, p.pos.z - me.pos.z);
+        if (d < nd) { nd = d; near = p; }
+      }
+      if (near) { const c = conns.get(near.id); if (c) send(c, { t: 'laughpt', rd: roundId }); toast(`😂 You laughed! +1 to ${near.name}`); }
+      else toast('😂 You laughed!');
+      buzz();
+    }
+  } else smileSince = 0;
+}
+
+// ----- messages for the features -----
+function onRuleData(p, m) {
+  switch (m.t) {
+    case 'round': applyRound(m); return true;
+    case 'freeze': if (m.rd === roundId) startFreeze(); return true;
+    case 'ko':
+      if (m.rd === roundId && playing()) { me.score++; toast(`💥 You knocked out ${p.name}!`); updateScores(); }
+      return true;
+    case 'laughpt':
+      if (m.rd === roundId && playing()) { me.score++; toast(`😂 You made ${p.name} laugh! +1`); updateScores(); }
+      return true;
+  }
+  return false;
+}
+function onHit(p, m) {
+  const now = performance.now();
+  if (me.hidden || now < me.koUntil || now < me.stunUntil) return;
+  me.stunUntil = now + 1500;
+  buzz();
+  if (cfg.damage && playing() && m.rd === roundId) {
+    me.hp--;
+    if (me.hp <= 0) {
+      me.koUntil = now + 3000;
+      me.stunUntil = me.koUntil;
+      const c = conns.get(p.id);
+      if (c) send(c, { t: 'ko', rd: roundId });
+      toast(`💥 Knocked out by ${p.name}!`);
+      setTimeout(respawn, 3000);
+      return;
+    }
+    toast(`Zapped by ${p.name}! ${'❤️'.repeat(me.hp)}`);
+  } else toast(`Zapped by ${p.name}!`);
 }
 
 // ---------- animate ----------
@@ -860,6 +1261,9 @@ function frame(now) {
 
   if (meParts && started) {
     const inp = readInput();
+    sampleCamera(now); updateFace(now); updateLoudness(dt);
+    const ko = now < me.koUntil;
+    if (ko) { inp.fwd = 0; inp.turn = 0; inp.jump = false; inp.zap = false; }
     const stunned = now < me.stunUntil;
     const speed = stunned ? 2.5 : 7;
     me.rot += inp.turn * 2.6 * dt;
@@ -869,14 +1273,24 @@ function frame(now) {
     if (inp.jump && me.y === 0) me.vy = 7;
     me.vy -= 20 * dt; me.y = Math.max(0, me.y + me.vy * dt); if (me.y === 0) me.vy = 0;
     me.zapCooldown -= dt;
-    if (inp.zap && me.zapCooldown <= 0 && !stunned) { me.zapCooldown = 0.6; tryZap(); }
+    let fire = inp.zap;
+    if (cfg.mouth && playing() && facePresent()) fire = mouthFire() && !ko;   // mouth replaces the button
+    if (fire && me.zapCooldown <= 0 && !stunned) { me.zapCooldown = 0.6; tryZap(cfg.shout && playing() ? loud : 0); }
+    updateLaugh(now);
+    updateFreeze(now, inp);
     me.walk += Math.abs(inp.fwd) * dt * 10;
 
     meParts.group.position.set(me.pos.x, me.y, me.pos.z);
     meParts.group.rotation.y = me.rot;
     animateBody(meParts, me.walk, Math.abs(inp.fwd));
-    meParts.screenMat.uniforms.staticAmt.value = stunned ? 0.75 : 0;
-    meParts.screenMat.uniforms.time.value = time;
+    const mu = meParts.screenMat.uniforms;
+    mu.staticAmt.value = stunned ? 0.75 : 0;
+    mu.time.value = time;
+    mu.damage.value = cfg.damage && roundId ? 1 - me.hp / MAX_HP : 0;
+    mu.power.value += ((ko ? 0 : 1) - mu.power.value) * Math.min(1, dt * 6);
+    setOpacity(meParts, me.hidden ? 0.3 : 1);
+    $('selfwrap').classList.toggle('ghost', me.hidden);
+    $('hearts').textContent = cfg.damage && roundId ? (ko ? '💥 KO' : '❤️'.repeat(Math.max(0, me.hp))) : '';
     $('selfwrap').classList.toggle('stunned', stunned);
 
     // camera follow
@@ -889,7 +1303,8 @@ function frame(now) {
     sendTimer += dt;
     if (sendTimer > 1 / 15) {
       sendTimer = 0;
-      broadcast({ t: 's', x: +me.pos.x.toFixed(2), z: +me.pos.z.toFixed(2), r: +me.rot.toFixed(3), y: +me.y.toFixed(2), st: stunned ? 1 : 0, sc: me.score, mu: micMuted || !micTrack ? 1 : 0 });
+      broadcast({ t: 's', x: +me.pos.x.toFixed(2), z: +me.pos.z.toFixed(2), r: +me.rot.toFixed(3), y: +me.y.toFixed(2), st: stunned ? 1 : 0, sc: me.score, mu: micMuted || !micTrack ? 1 : 0,
+        hp: me.hp, ko: now < me.koUntil ? 1 : 0, hd: me.hidden ? 1 : 0, rd: roundId });
     }
   } else {
     // lobby: slow orbit
@@ -913,9 +1328,11 @@ function frame(now) {
     const u = p.parts.screenMat.uniforms;
     u.time.value = time;
     u.staticAmt.value = p.stunned ? 0.75 : (u.hasVideo.value ? 0 : 0.15);
-    // power-off look if we haven't heard from them for a while
+    u.damage.value = cfg.damage && roundId ? 1 - (p.hp ?? MAX_HP) / MAX_HP : 0;
+    // power-off look if knocked out or we haven't heard from them for a while
     const quiet = now - p.lastMsg > 4000;
-    u.power.value += ((quiet ? 0 : 1) - u.power.value) * Math.min(1, dt * 6);
+    u.power.value += ((quiet || p.ko ? 0 : 1) - u.power.value) * Math.min(1, dt * 6);
+    setOpacity(p.parts, p.hidden ? 0.06 : 1);
     updateVoice(p);
     p.parts.label.material.color.setHex(p.talking ? 0x9dff9d : 0xffffff);
     if (p.video) {
@@ -927,6 +1344,9 @@ function frame(now) {
     const sv = $('selfview');
     if (sv.videoWidth) meParts.screenMat.uniforms.videoAspect.value = sv.videoWidth / sv.videoHeight;
   }
+
+  updateBillboards(time);
+  checkWin();
 
   for (let i = beams.length - 1; i >= 0; i--) {
     const b = beams[i];
@@ -946,4 +1366,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { calls, remotes, me, conns, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };

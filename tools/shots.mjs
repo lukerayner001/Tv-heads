@@ -1,0 +1,23 @@
+import { createRequire } from 'module'; const { chromium } = createRequire(import.meta.url)(process.env.PWPATH);
+const b = await chromium.launch({ args: ['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--disable-features=WebRtcHideLocalIpsWithMdns','--use-gl=swiftshader','--enable-unsafe-swiftshader'] });
+const base = 'http://127.0.0.1:8080/tv-heads.html?peerhost=127.0.0.1&peerport=9000';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const H = await (await b.newContext({ viewport: { width: 1000, height: 650 } })).newPage(); await H.goto(base); await H.fill('#name','Luke'); await H.click('#hostBtn');
+await H.waitForFunction(() => document.getElementById('roomcode').textContent.length===4); await sleep(500);
+await H.screenshot({ path: 'tools/s1-settings.png' });
+const A = await (await b.newContext({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true })).newPage(); await A.goto(base + '&norender'); await A.fill('#name','Bodhi'); await A.fill('#code', await H.textContent('#roomcode')); await A.click('#joinBtn');
+await A.waitForFunction(() => window.__tv.conns.size === 1, null, {timeout: 20000});
+await H.evaluate(() => { for (const el of document.querySelectorAll('#featureList input')) el.checked = ['damage','hide','zapcam','billboards','shout'].includes(el.dataset.k); document.getElementById('target').value = '5'; });
+await H.click('#startRoundBtn');
+await H.evaluate(() => { const m = window.__tv.me; m.pos.set(0,0,10); m.rot = Math.PI; });
+await A.evaluate(() => { const m = window.__tv.me; m.pos.set(-1.5,0,4); m.rot = 0; });
+await sleep(1000);
+for (let i = 0; i < 2; i++) { await H.keyboard.down('KeyF'); await sleep(120); await H.keyboard.up('KeyF'); await sleep(1900); }
+await H.evaluate(() => { window.__tv.me.score = 2; });
+await sleep(2200);
+await H.screenshot({ path: 'tools/s2-damage.png' });
+await H.evaluate(() => { const m = window.__tv.me; m.pos.set(0,0,10); m.rot = 0; }); await sleep(1500);
+await H.screenshot({ path: 'tools/s3-billboard.png' });
+await H.evaluate(() => { window.__tv.me.score = 5; }); await sleep(1500);
+await H.screenshot({ path: 'tools/s4-results.png' });
+await b.close();
