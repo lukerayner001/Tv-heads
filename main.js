@@ -295,8 +295,29 @@ function recolor(p, color) {
 }
 
 // ---------- networking ----------
+// ---------- connection helpers (STUN finds a direct route; TURN relays when there isn't one) ----------
+// Free relay from Metered Open Relay: fill in your app name + API key from dashboard.metered.ca
+const METERED_APP = '';
+const METERED_KEY = '';
+let iceServers = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+];
+let iceLoaded = false;
+async function loadIce() {
+  if (iceLoaded) return;
+  iceLoaded = true;
+  if (!METERED_APP || !METERED_KEY) return;
+  try {
+    const r = await fetch(`https://${METERED_APP}.metered.live/api/v1/turn/credentials?apiKey=${METERED_KEY}`);
+    const turn = await r.json();
+    if (Array.isArray(turn) && turn.length) iceServers = [...iceServers, ...turn];
+  } catch (e) { console.warn('TURN credentials failed', e); }
+}
+const hasRelay = () => iceServers.some((s) => [].concat(s.urls).some((u) => String(u).startsWith('turn')));
+
 function peerOptions() {
-  const o = { debug: 1 };
+  const o = { debug: 1, config: { iceServers } };
   if (qs.get('peerhost')) {          // only for local testing
     o.host = qs.get('peerhost'); o.port = +qs.get('peerport') || 9000; o.path = '/'; o.secure = false;
     o.config = { iceServers: [] };
@@ -602,7 +623,8 @@ function wirePeer() {
   peer.on('disconnected', () => { if (!peer.destroyed) peer.reconnect(); });
 }
 
-function withMainPeer(cb) {
+async function withMainPeer(cb) {
+  await loadIce();
   if (peer && peer.open) return cb();
   if (!peer) { peer = new Peer(undefined, peerOptions()); wirePeer(); }
   peer.once('open', cb);
@@ -647,8 +669,11 @@ async function join() {
   withMainPeer(() => tryJoin(0));
 }
 
+let sawRoom = false;
 function tryJoin(attempt) {
+  if (attempt === 0) sawRoom = false;
   knock((r) => {
+    if (r === 'timeout') sawRoom = true;   // the room answered the lobby but we couldn't reach it
     if (r.t === 'full') { busy = false; setStatus(`Room ${roomCode} is full (${MAX_PLAYERS} players max).`, true); return; }
     if (r.t === 'roster') {
       busy = false; joinedAt = performance.now(); startGame();
@@ -657,7 +682,13 @@ function tryJoin(attempt) {
     }
     // nobody answering – the host may be handing over, so try a few more times
     if (attempt < 4) { setStatus('Looking for room…'); setTimeout(() => tryJoin(attempt + 1), 3000); }
-    else { busy = false; setStatus('Room not found. Check the code.', true); }
+    else if (sawRoom) {
+      busy = false;
+      setStatus(hasRelay()
+        ? 'Found the room but couldn’t connect. Try again, or switch Wi-Fi/mobile data.'
+        : 'Found the room but your networks block a direct link – a relay server is needed.', true);
+    }
+    else { busy = false; setStatus('Room not found. Check the code (and that the host’s screen is on).', true); }
   });
 }
 
