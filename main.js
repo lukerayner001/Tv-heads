@@ -1169,7 +1169,7 @@ function applyRound(m) {
   touch.aim = false; $('aimBtn').classList.remove('on');
   zapPhotos.length = 0;
   for (const p of remotes.values()) { p.score = 0; clearPaint(p.paint); }
-  clearPaint(mePaint); clearFloorSplats(); setTimeout(redrawPaintView);
+  clearPaint(mePaint); clearFloorSplats(); redrawPaintView();
   roundState = m.state === 'ended' ? 'ended' : 'playing';
   if (roundState === 'playing' && meParts) roundSpawn(m.seed || m.rid);
   nextFreezeAt = performance.now() + 12000 + Math.random() * 10000;
@@ -1194,8 +1194,15 @@ function checkWin() {
   if (w) endRound(w);
 }
 
+function clearAllCracks() {
+  for (const p of remotes.values()) clearPaint(p.paint);
+  clearPaint(mePaint);
+  redrawPaintView();
+}
 function endRound(w) {
   roundState = 'ended';
+  clearAllCracks();
+  me.koUntil = 0; me.stunUntil = 0;
   releaseMouse();
   updateScores();
   hideOverlays();
@@ -1684,6 +1691,7 @@ function flushView() {                     // once per frame, however many hits 
 addEventListener('resize', redrawPaintView);
 
 function applyPaint(m, fromId) {
+  if (m.rd !== roundId || roundState === 'ended') return;
   if (m.id === peer?.id) {
     const now = performance.now();
     if (!mePaint || now < me.koUntil) return;
@@ -1729,7 +1737,7 @@ const raycaster = new THREE.Raycaster();
 raycaster.far = 90;
 const crosshair = $('crosshair');
 let fireQueued = false;
-const paintOn = () => cfg.gun && started;
+const paintOn = () => cfg.gun && started && roundState !== 'ended';
 let gunHeat = 0;
 
 // ----- effects: tracers, sparks, glass, bullet holes -----

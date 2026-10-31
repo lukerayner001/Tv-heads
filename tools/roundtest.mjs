@@ -14,7 +14,17 @@ const all = [H, A, B];
 const pos = () => Promise.all(all.map(p => p.evaluate(() => [window.__tv.me.pos.x, window.__tv.me.pos.z])));
 // bunch everyone together, then someone wins
 for (const p of all) await p.evaluate(() => window.__tv.me.pos.set(0.5, 0, 3));
+const aid = await A.evaluate(() => window.__tv.peer.id);
+const rd0 = await H.evaluate(() => window.__tv.roundId);
+for (let i = 0; i < 6; i++) await H.evaluate(([aid, rd, i]) => { for (const c of window.__tv.conns.values()) c.send({ t: 'paint', id: aid, u: 0.2 + i * 0.12, v: 0.5, s: 0.2, seed: 50 + i, rd }); }, [aid, rd0, i]);
+await sleep(800);
+check('A has cracks before the win', (await A.evaluate(() => window.__tv.mePaint.hits)) > 0);
 await A.evaluate(() => { window.__tv.me.score = 5; }); await sleep(1200);
+const cleared = await Promise.all(all.map(p => p.evaluate(() => window.__tv.mePaint.hits === 0 && [...window.__tv.remotes.values()].every(r => r.paint.hits === 0))));
+check('every screen (own + others) is clean on the score screen', cleared.every(Boolean), JSON.stringify(cleared));
+await H.evaluate(([aid, rd]) => { for (const c of window.__tv.conns.values()) c.send({ t: 'paint', id: aid, u: 0.5, v: 0.5, s: 0.2, seed: 99, rd }); }, [aid, rd0]);
+await sleep(500);
+check('late hits from the finished round are ignored', (await A.evaluate(() => window.__tv.mePaint.hits)) === 0);
 check('quick score screen on everyone', (await Promise.all(all.map(p => p.evaluate(() => !document.getElementById('results').classList.contains('hidden'))))).every(Boolean));
 const txt = await B.textContent('#nextIn');
 check('countdown shown', /Next round in \d/.test(txt), txt);
