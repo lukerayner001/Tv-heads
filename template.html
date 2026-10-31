@@ -93,7 +93,6 @@
   #winner { font-size: 30px; text-align: center; margin: 4px 0 10px; }
   #finalScores div { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
   #finalScores b { margin-left: auto; }
-  #featureList.dim { opacity: .35; pointer-events: none; }
   #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
   #gallery figure { margin: 0; background: #111; border: 4px solid #8a5a3c; border-radius: 8px; overflow: hidden; }
   #gallery img { width: 100%; display: block; }
@@ -172,11 +171,7 @@
 <div id="settings" class="overlay hidden">
   <div class="card">
     <h2>Round settings</h2>
-    <p class="sub">Pick the game and what’s switched on this round.</p>
-    <div class="row"><span>Game</span>
-      <select id="mode"><option value="battle">⚔️ Battle arena</option><option value="pong">🏓 TV Pong</option></select>
-    </div>
-    <div id="featureList"></div>
+    <p class="sub">🔫 Blaster battle with 🏆 leader billboards.<br>Smash a screen to score.</p>
     <div class="row"><span>First to</span>
       <select id="target"><option>5</option><option>10</option><option>15</option><option>20</option></select>
     </div>

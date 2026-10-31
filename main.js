@@ -509,7 +509,7 @@ function setupCall(call) {
 function onData(from, m) {
   const p = ensureRemote(from);
   p.lastMsg = performance.now();
-  if (onRuleData(p, m) || onPaintData(p, m) || onPongData(p, m)) return;
+  if (onRuleData(p, m) || onPaintData(p, m)) return;
   switch (m.t) {
     case 'hi':
       setLabel(p, String(m.name || 'Player'));
@@ -943,7 +943,7 @@ const FEATURES = [
   ['shout', '📣 Shout power', 'The louder you shout as you zap, the further it goes.'],
   ['gun', '🔫 Blaster', 'Replaces the zap. Hold to fire fast. Hits crack their screen – and their view. Crack it enough and it’s smashed.'],
 ];
-const DEFAULT_CFG = { target: 10, damage: true, hide: true, zapcam: true, billboards: true, mouth: false, laugh: false, freeze: false, shout: false, gun: false, mode: 'battle' };
+const DEFAULT_CFG = { target: 10, gun: true, billboards: true, damage: false, hide: false, zapcam: false, mouth: false, laugh: false, freeze: false, shout: false };
 const MAX_HP = 3;
 let cfg = { ...DEFAULT_CFG };
 let roundId = 0;
@@ -954,18 +954,9 @@ const playing = () => roundState === 'playing';
 
 // ----- settings panel (host) -----
 function savedCfg() { try { return { ...DEFAULT_CFG, ...JSON.parse(localStorage.getItem('tvhead-cfg') || '{}') }; } catch { return { ...DEFAULT_CFG }; } }
-function buildSettings() {
-  const c = savedCfg();
-  $('featureList').innerHTML = FEATURES.map(([k, name, desc]) =>
-    `<label class="feat"><input type="checkbox" data-k="${k}" ${c[k] ? 'checked' : ''}><span><b>${name}</b><small>${desc}</small></span></label>`).join('');
-  $('target').value = String(c.target);
-  $('mode').value = c.mode || 'battle';
-  $('featureList').classList.toggle('dim', $('mode').value === 'pong');
-}
-$('mode').onchange = () => $('featureList').classList.toggle('dim', $('mode').value === 'pong');
+function buildSettings() { $('target').value = String(savedCfg().target); }
 function readSettings() {
-  const c = { target: +$('target').value || 10, mode: $('mode').value };
-  for (const el of $('featureList').querySelectorAll('input')) c[el.dataset.k] = el.checked;
+  const c = { target: +$('target').value || 10 };
   try { localStorage.setItem('tvhead-cfg', JSON.stringify(c)); } catch {}
   return c;
 }
@@ -978,9 +969,7 @@ $('nextRoundBtn').onclick = () => showSettings();
 $('keepPlayingBtn').onclick = () => $('results').classList.add('hidden');
 
 function startRound() {
-  const c = readSettings();
-  if (c.mode === 'pong') c.pongIds = [peer.id, ...conns.keys()].sort();
-  const m = { t: 'round', rid: Date.now(), cfg: c, state: 'playing' };
+  const m = { t: 'round', rid: Date.now(), cfg: readSettings(), state: 'playing' };
   applyRound(m);
   broadcast(m);
 }
@@ -988,19 +977,13 @@ function startRound() {
 function applyRound(m) {
   if (!m.rid || m.rid <= roundId) return;
   roundId = m.rid;
-  cfg = { ...DEFAULT_CFG, ...m.cfg };
+  cfg = { ...DEFAULT_CFG, target: +m.cfg?.target || 10 };
   me.score = 0; me.hp = MAX_HP; me.koUntil = 0; me.stunUntil = 0;
   touch.aim = false; $('aimBtn').classList.remove('on');
   zapPhotos.length = 0;
   for (const p of remotes.values()) { p.score = 0; clearPaint(p.paint); }
   clearPaint(mePaint); clearFloorSplats(); setTimeout(redrawPaintView);
   roundState = m.state === 'ended' ? 'ended' : 'playing';
-  if (cfg.mode === 'pong') buildPong();
-  else {
-    destroyPong();
-    if (meParts) { meParts.group.visible = true; meParts.group.scale.setScalar(1); }
-    if (Math.abs(me.pos.x) > 100) respawn();
-  }
   nextFreezeAt = performance.now() + 12000 + Math.random() * 10000;
   hideOverlays();
   if (roundState === 'playing') toast(`Round on! First to ${cfg.target}`);
@@ -1011,10 +994,9 @@ function applyRound(m) {
 }
 
 function updateFeatureChips() {
-  const on = FEATURES.filter(([k]) => cfg[k]).map(([, n]) => n.split(' ')[0]).join(' ');
-  $('chips').textContent = !roundId ? 'Warm-up' : cfg.mode === 'pong' ? `🏓 TV Pong · first to ${cfg.target}` : `First to ${cfg.target} ${on}`;
+  $('chips').textContent = roundId ? `🔫 First to ${cfg.target} smashed screens` : '🔫 Warm-up';
   $('settingsBtn').classList.toggle('hidden', !holdingDoor);
-  $('zapBtn').textContent = cfg.mouth && face ? '😮' : cfg.gun && roundId ? '🔫' : '⚡';
+  $('zapBtn').textContent = '🔫';
 }
 
 function checkWin() {
@@ -1466,11 +1448,11 @@ function applyPaint(m, fromId) {
     me.shakeUntil = now + 140;
     sfx('crack');
     if (now - lastCov > 150) { lastCov = now; measureCoverage(mePaint); }
-    if (screenDamage(mePaint) >= 1 && playing() && m.rd === roundId) {
+    if (screenDamage(mePaint) >= 1 && m.rd === roundId) {
       me.koUntil = now + 3000; me.stunUntil = me.koUntil;
       const by = remotes.get(fromId);
       const c = conns.get(fromId);
-      if (c) send(c, { t: 'ko', rd: roundId });
+      if (c && playing()) send(c, { t: 'ko', rd: roundId });
       toast(`💥 Screen smashed by ${by ? by.name : 'someone'}!`);
       buzz();
       setTimeout(respawn, 3000);
@@ -1504,7 +1486,7 @@ const raycaster = new THREE.Raycaster();
 raycaster.far = 90;
 const crosshair = $('crosshair');
 let fireQueued = false;
-const paintOn = () => cfg.gun && playing();
+const paintOn = () => cfg.gun && started;
 let gunHeat = 0;
 
 // ----- effects: tracers, sparks, glass, bullet holes -----
@@ -1613,220 +1595,6 @@ function onPaintData(p, m) {
   return false;
 }
 
-// =====================================================================
-// ---------- TV Pong: your TV head is the bat ----------
-// =====================================================================
-const PONG_C = new THREE.Vector3(400, 0, 0);   // built away from the battle arena
-const PONG_SCALE = 2;                          // big TV heads = big bats
-const BAT_HALF = 0.725 * PONG_SCALE;           // half the TV's width
-const BALL_R = 0.45, BALL_Y = 2.3 * PONG_SCALE;
-const pongMode = () => cfg.mode === 'pong' && roundId > 0;
-let pong = null;     // { ids, sides, group, ball, mySide }
-let pongBall = { x: 0, z: 0, vx: 0, vz: 0, t: 0, lastHit: null, waitUntil: 0 };
-let pongSendT = 0;
-
-// One side per player. 1 player = practice box, 2 = classic rectangle, 3+ = triangle, square, pentagon, hexagon…
-function pongLayout(ids) {
-  const n = ids.length;
-  const pts = [];
-  let owners = [];
-  if (n <= 2) {
-    const W = 16, Lz = n === 2 ? 24 : 16;
-    pts.push([-W / 2, -Lz / 2], [W / 2, -Lz / 2], [W / 2, Lz / 2], [-W / 2, Lz / 2]);
-    owners = [ids[0], null, ids[1] ?? null, null];
-  } else {
-    const L = 16, R = L / (2 * Math.sin(Math.PI / n));
-    for (let k = 0; k < n; k++) { const a = (2 * Math.PI * k) / n - Math.PI / 2 - Math.PI / n; pts.push([R * Math.cos(a), R * Math.sin(a)]); }
-    owners = ids.slice();
-  }
-  return pts.map((a, k) => {
-    const b = pts[(k + 1) % pts.length];
-    const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    let nx = -mx, nz = -mz; const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;   // inward normal
-    return { a, b, mx, mz, len, nx, nz, tx: -nz, tz: nx, owner: owners[k] ?? null };     // t = the owner's "right"
-  });
-}
-
-function buildPong() {
-  destroyPong();
-  const ids = cfg.pongIds || [];
-  const sides = pongLayout(ids.length ? ids : [peer?.id]);
-  const g = new THREE.Group();
-  g.position.copy(PONG_C);
-  // floor
-  const shape = new THREE.Shape(sides.map((s) => new THREE.Vector2(s.a[0], -s.a[1])));
-  const floor = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshStandardMaterial({ color: 0x1d6b4f, roughness: 0.8 }));
-  floor.rotation.x = -Math.PI / 2; g.add(floor);
-  const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const centre = new THREE.Mesh(new THREE.RingGeometry(1.6, 1.8, 32), lineMat); centre.rotation.x = -Math.PI / 2; centre.position.y = 0.02; g.add(centre);
-  for (const s of sides) {
-    const ang = Math.atan2(s.b[0] - s.a[0], s.b[1] - s.a[1]);
-    if (s.owner) {
-      const owner = s.owner === peer?.id ? { color: myColor } : remotes.get(s.owner);
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.15, s.len), new THREE.MeshBasicMaterial({ color: owner?.color ?? 0xffffff }));
-      strip.position.set(s.mx, 0.08, s.mz); strip.rotation.y = ang; g.add(strip);
-    } else {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(0.6, 6, s.len + 0.6), new THREE.MeshStandardMaterial({ color: 0x5a4fcf, transparent: true, opacity: 0.55 }));
-      wall.position.set(s.mx - s.nx * 0.3, 3, s.mz - s.nz * 0.3); wall.rotation.y = ang; g.add(wall);
-    }
-  }
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 20, 14), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff3b0, emissiveIntensity: 0.9 }));
-  ball.position.set(0, BALL_Y, 0); g.add(ball);
-  const shadow = new THREE.Mesh(new THREE.CircleGeometry(BALL_R, 16), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 }));
-  shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.03; g.add(shadow);
-  scene.add(g);
-  pong = { ids, sides, group: g, ball, shadow, mySide: sides.find((s) => s.owner === peer?.id) || null, s: 0 };
-  pongBall = { x: 0, z: 0, vx: 0, vz: 0, t: performance.now(), lastHit: null, waitUntil: performance.now() + 2500, speed: 11 };
-  if (pong.mySide) { placeOnSide(pong.mySide, 0); }
-}
-function destroyPong() {
-  if (!pong) return;
-  scene.remove(pong.group);
-  pong.group.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); });
-  pong = null;
-}
-function placeOnSide(side, s) {
-  // stand behind the line so the TV screen sits on it, facing the middle
-  const back = 0.5 * PONG_SCALE;
-  me.pos.set(PONG_C.x + side.mx + side.tx * s - side.nx * back, 0, PONG_C.z + side.mz + side.tz * s - side.nz * back);
-  me.rot = Math.atan2(side.nx, side.nz);
-}
-
-// Where is a player's bat along their side? (from their position)
-function batOffset(side, x, z) { return (x - PONG_C.x - side.mx) * side.tx + (z - PONG_C.z - side.mz) * side.tz; }
-function sideActive(id) { return id === peer?.id || remotes.has(id); }
-
-function serveBall() {
-  const owned = pong.sides.filter((s) => s.owner && sideActive(s.owner));
-  const target = owned.length ? owned[Math.floor(Math.random() * owned.length)] : pong.sides[0];
-  const a = (Math.random() - 0.5) * 0.8;                       // a bit off-centre
-  const dx = -target.nx * Math.cos(a) + target.tx * Math.sin(a), dz = -target.nz * Math.cos(a) + target.tz * Math.sin(a);
-  pongBall.speed = 11;
-  Object.assign(pongBall, { x: 0, z: 0, vx: dx * pongBall.speed, vz: dz * pongBall.speed, lastHit: null });
-}
-
-// Only the host moves the ball; everyone else draws what the host sends.
-function simulateBall(dt, now) {
-  const b = pongBall;
-  if (now < b.waitUntil) { b.x = 0; b.z = 0; b.vx = 0; b.vz = 0; return; }
-  if (b.vx === 0 && b.vz === 0) serveBall();
-  const steps = 4;
-  for (let i = 0; i < steps; i++) {
-    b.x += b.vx * dt / steps; b.z += b.vz * dt / steps;
-    for (const s of pong.sides) {
-      const d = (b.x - s.mx) * s.nx + (b.z - s.mz) * s.nz;     // distance inside the line
-      const vin = b.vx * s.nx + b.vz * s.nz;
-      const along = (b.x - s.mx) * s.tx + (b.z - s.mz) * s.tz;
-      if (Math.abs(along) > s.len / 2 + 1) continue;
-      if (s.owner && sideActive(s.owner)) {
-        if (d < BALL_R && d > -BALL_R && vin < 0) {
-          const bx = s.owner === peer.id ? me.pos.x : remotes.get(s.owner).target.x;
-          const bz = s.owner === peer.id ? me.pos.z : remotes.get(s.owner).target.z;
-          const off = along - batOffset(s, bx, bz);
-          if (Math.abs(off) <= BAT_HALF + BALL_R) {
-            // bounce off the TV: hit near the edge to angle it, like real pong
-            b.speed = Math.min(26, b.speed * 1.06);
-            const k = Math.max(-1, Math.min(1, off / (BAT_HALF + BALL_R))) * 0.9;
-            const dx = s.nx * Math.cos(k) + s.tx * Math.sin(k), dz = s.nz * Math.cos(k) + s.tz * Math.sin(k);
-            b.vx = dx * b.speed; b.vz = dz * b.speed;
-            b.x = s.mx + s.nx * BALL_R + s.tx * along; b.z = s.mz + s.nz * BALL_R + s.tz * along;
-            b.lastHit = s.owner;
-            broadcast({ t: 'pbonk', id: s.owner });
-            bonk(s.owner);
-          }
-        } else if (d < -1.8) {
-          const m = { t: 'pgoal', who: s.owner, by: b.lastHit, rd: roundId };
-          broadcast(m); onPongGoal(m);
-          b.waitUntil = now + 1500; b.vx = b.vz = 0; b.x = b.z = 0;
-          return;
-        }
-      } else if (d < BALL_R && vin < 0) {                       // wall: plain bounce
-        b.vx -= 2 * vin * s.nx; b.vz -= 2 * vin * s.nz;
-        b.x += s.nx * (BALL_R - d); b.z += s.nz * (BALL_R - d);
-      }
-    }
-    if (Math.hypot(b.x, b.z) > 40) { b.waitUntil = now + 800; b.vx = b.vz = 0; }   // escaped through a corner
-  }
-}
-
-function bonk(id) {
-  const p = id === peer?.id ? null : remotes.get(id);
-  const mat = p ? p.parts.screenMat : meParts?.screenMat;
-  if (mat) { mat.uniforms.staticAmt.value = 0.5; setTimeout(() => (mat.uniforms.staticAmt.value = 0), 120); }
-  if (!p) buzz();
-}
-
-function onPongGoal(m) {
-  if (m.rd !== roundId) return;
-  const name = (id) => (id === peer?.id ? 'you' : remotes.get(id)?.name || 'someone');
-  if (m.by === peer?.id && m.who !== peer?.id && playing()) { me.score++; updateScores(); toast(`🏓 You scored past ${name(m.who)}!`); }
-  else if (m.who === peer?.id) { toast(m.by && m.by !== peer?.id ? `🏓 ${name(m.by)} got one past you!` : '🏓 Own goal!'); me.stunUntil = performance.now() + 900; buzz(); }
-  else toast(`🏓 Goal past ${name(m.who)}!`);
-}
-
-function onPongData(p, m) {
-  switch (m.t) {
-    case 'pb':
-      if (m.rd !== roundId || holdingDoor) return true;
-      Object.assign(pongBall, { x: m.x, z: m.z, vx: m.vx, vz: m.vz, t: performance.now(), lastHit: m.lh ?? null, speed: Math.hypot(m.vx, m.vz) || 11 });
-      return true;
-    case 'pgoal': onPongGoal(m); return true;
-    case 'pbonk': bonk(m.id); return true;
-  }
-  return false;
-}
-
-// my own frame in pong mode: slide along my side, fixed camera behind my bat
-function pongMe(dt, now, time, inp) {
-  if (!pong) buildPong();
-  const side = pong.mySide;
-  const stunned = now < me.stunUntil;
-  if (side) {
-    const speed = 13;
-    pong.s += inp.strafe * speed * dt * (stunned ? 0.5 : 1) + mouseDX * 0.03 + touchLookDX * 18;
-    const lim = side.len / 2 - BAT_HALF * 0.6;
-    pong.s = Math.max(-lim, Math.min(lim, pong.s));
-    const ox = me.pos.x;
-    placeOnSide(side, pong.s);
-    me.walk += Math.abs(me.pos.x - ox) * 3;
-  }
-  mouseDX = mouseDY = touchLookDX = touchLookDY = 0;
-  me.y = 0;
-  // ball
-  if (holdingDoor) {
-    simulateBall(dt, now);
-    pongSendT += dt;
-    if (pongSendT > 0.05) { pongSendT = 0; broadcast({ t: 'pb', x: +pongBall.x.toFixed(2), z: +pongBall.z.toFixed(2), vx: +pongBall.vx.toFixed(2), vz: +pongBall.vz.toFixed(2), lh: pongBall.lastHit, rd: roundId }); }
-    pong.ball.position.set(pongBall.x, BALL_Y, pongBall.z);
-  } else {
-    const t = Math.min(0.25, (now - pongBall.t) / 1000);       // glide between host updates
-    pong.ball.position.set(pongBall.x + pongBall.vx * t, BALL_Y, pongBall.z + pongBall.vz * t);
-  }
-  pong.shadow.position.set(pong.ball.position.x, 0.03, pong.ball.position.z);
-  // camera
-  if (side) {
-    camPos.set(PONG_C.x + side.mx - side.nx * 9, 15, PONG_C.z + side.mz - side.nz * 9);
-    lookAt.set(PONG_C.x + side.nx * 1.5, 0, PONG_C.z + side.nz * 1.5);
-  } else {                                                      // spectating
-    camPos.set(PONG_C.x + Math.sin(time * 0.2) * 4, 26, PONG_C.z + 18);
-    lookAt.set(PONG_C.x, 0, PONG_C.z);
-  }
-  camera.position.lerp(camPos, 1 - Math.exp(-dt * 8));
-  camera.lookAt(lookAt);
-  if (Math.abs(camera.fov - 60) > 0.05) { camera.fov = 60; camera.updateProjectionMatrix(); }
-  meParts.group.visible = !!side;
-  meParts.group.scale.setScalar(side ? PONG_SCALE : 1);
-  meParts.group.position.set(me.pos.x, 0, me.pos.z);
-  meParts.group.rotation.y = me.rot;
-  animateBody(meParts, me.walk, Math.min(1, Math.abs(inp.strafe)));
-  const mu = meParts.screenMat.uniforms;
-  mu.time.value = time; mu.damage.value = 0; mu.power.value = 1;
-  setOpacity(meParts, 0.55);                                   // see the ball through your own TV
-  crosshair.classList.add('hidden');
-  $('hearts').textContent = side ? '🏓 ← → to move' : '👀 Spectating';
-  $('lockHint').classList.add('hidden');
-}
 
 // ---------- graphics health check ----------
 // If the 3D view comes out solid white (a driver bug), switch to simple graphics and reload.
@@ -1887,7 +1655,7 @@ function frame(now) {
 
   if (meParts && started) {
     const inp = readInput();
-    if (pongMode()) pongMe(dt, now, time, inp); else {
+    {
     sampleCamera(now); updateFace(now); updateLoudness(dt);
     const ko = now < me.koUntil;
     if (ko) { inp.fwd = 0; inp.strafe = 0; inp.jump = false; inp.zap = false; inp.aim = false; }
@@ -1943,7 +1711,7 @@ function frame(now) {
     mu.power.value += ((ko ? 0 : 1) - mu.power.value) * Math.min(1, dt * 6);
     setOpacity(meParts, me.hidden ? 0.3 : adsT > 0.5 ? 0.45 : 1);
     $('selfwrap').classList.toggle('ghost', me.hidden);
-    $('hearts').textContent = !roundId ? '' : cfg.gun
+    $('hearts').textContent = cfg.gun
       ? (ko ? '💥 Screen smashed!' : `🔫 Screen ${Math.round(screenDamage(mePaint || { coverage: 0, hits: 0 }) * 100)}% damaged`)
       : cfg.damage ? (ko ? '💥 KO' : '❤️'.repeat(Math.max(0, me.hp))) : '';
     $('selfwrap').classList.toggle('stunned', stunned);
@@ -1991,7 +1759,6 @@ function frame(now) {
     const sp = Math.hypot(p.pos.x - ox, p.pos.z - oz) / Math.max(dt, 0.001);
     p.walk += sp * dt * 1.4;
     p.parts.group.position.set(p.pos.x, p.y, p.pos.z);
-    p.parts.group.scale.setScalar(pong && pong.ids.includes(p.id) ? PONG_SCALE : 1);
     p.parts.group.rotation.y = p.rot;
     p.parts.group.visible = p.seen;
     animateBody(p.parts, p.walk, Math.min(1, sp / 7));
@@ -2041,4 +1808,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { gpuName, safeGfx, get decals() { return decals.length; }, get pong() { return pong; }, pongBall: () => pongBall, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };

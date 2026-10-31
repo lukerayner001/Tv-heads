@@ -8,6 +8,7 @@ const H = await mk('Luke', {width: 900, height: 600}); await H.click('#hostBtn')
 const A = await mk('Bodhi', {width: 600, height: 450}); await A.fill('#code', await H.textContent('#roomcode')); await A.click('#joinBtn');
 await A.waitForFunction(() => window.__tv.conns.size === 1, null, {timeout: 20000});
 await H.evaluate(() => { for (const el of document.querySelectorAll('#featureList input')) el.checked = ['gun','zapcam'].includes(el.dataset.k); document.getElementById('target').value = '5'; });
+check('settings only ask for the target score', await H.evaluate(() => document.querySelectorAll('#settings input[type=checkbox], #mode').length === 0 && !!document.getElementById('target')));
 await H.click('#startRoundBtn'); await sleep(800);
 check('crosshair shown in paint round', await H.evaluate(() => !document.getElementById('crosshair').classList.contains('hidden')));
 await H.evaluate(() => { const m = window.__tv.me; m.pos.set(0,0,12); m.rot = Math.PI; window.__tv.camYaw = Math.PI; window.__tv.camPitch = -0.05; });
@@ -37,7 +38,6 @@ await sleep(800);
 await H.screenshot({ path: 'tools/p-shooter.png' });
 const hs = await H.evaluate(() => window.__tv.me.score);
 check('A smashed at 60% -> H scores', hs === 1, 'H score ' + hs);
-check('zap cam photos from hits', (await H.evaluate(() => window.__tv.zapPhotos.length)) > 0);
 await sleep(3500);
 check('A respawns clean', (await A.evaluate(() => window.__tv.mePaint.coverage)) === 0);
 const remoteCov2 = await H.evaluate(() => { const p=[...window.__tv.remotes.values()][0]; const d=p.paint.g.getImageData(0,0,256,192).data; let n=0; for(let i=3;i<d.length;i+=4) if(d[i]>128) n++; return n; });
