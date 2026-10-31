@@ -227,7 +227,9 @@ function makeTVHead(color, name) {
   const label = makeLabel(name || 'Player');
   g.add(label);
 
-  return { group: g, screenMat, legL, legR, armL, armR, label };
+  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.2, 0.6), new THREE.MeshStandardMaterial({ color: 0x1b1b22, roughness: 0.4 }));
+  gun.position.set(0, -0.4, 0.22); gun.visible = false; armR.add(gun);
+  return { group: g, screenMat, screen, legL, legR, armL, armR, label, gun };
 }
 
 function setLabel(p, name, muted = p.muted) {
@@ -919,9 +921,9 @@ const FEATURES = [
   ['laugh', '😂 Try not to laugh', 'Smile and the nearest player gets a point.'],
   ['freeze', '🗿 Freeze!', 'When FREEZE! is called, move – or your face moves – and lose a point.'],
   ['shout', '📣 Shout power', 'The louder you shout as you zap, the further it goes.'],
-  ['paint', '🎨 Paintball', 'Replaces the zap. Aim with the mouse or tap. Paint a screen 50% to paint them out.'],
+  ['gun', '🔫 Blaster', 'Replaces the zap. Hold to fire fast. Hits crack their screen – and their view. 60% cracked = smashed.'],
 ];
-const DEFAULT_CFG = { target: 10, damage: true, hide: true, zapcam: true, billboards: true, mouth: false, laugh: false, freeze: false, shout: false, paint: false, mode: 'battle' };
+const DEFAULT_CFG = { target: 10, damage: true, hide: true, zapcam: true, billboards: true, mouth: false, laugh: false, freeze: false, shout: false, gun: false, mode: 'battle' };
 const MAX_HP = 3;
 let cfg = { ...DEFAULT_CFG };
 let roundId = 0;
@@ -992,7 +994,7 @@ function updateFeatureChips() {
   const on = FEATURES.filter(([k]) => cfg[k]).map(([, n]) => n.split(' ')[0]).join(' ');
   $('chips').textContent = !roundId ? 'Warm-up' : cfg.mode === 'pong' ? `🏓 TV Pong · first to ${cfg.target}` : `First to ${cfg.target} ${on}`;
   $('settingsBtn').classList.toggle('hidden', !holdingDoor);
-  $('zapBtn').textContent = cfg.mouth && face ? '😮' : cfg.paint && roundId ? '🎨' : '⚡';
+  $('zapBtn').textContent = cfg.mouth && face ? '😮' : cfg.gun && roundId ? '🔫' : '⚡';
 }
 
 function checkWin() {
@@ -1281,7 +1283,7 @@ function onRuleData(p, m) {
     case 'round': applyRound(m); return true;
     case 'freeze': if (m.rd === roundId) startFreeze(); return true;
     case 'ko':
-      if (m.rd === roundId && playing()) { me.score++; toast(cfg.paint ? `🎨 You painted out ${p.name}!` : `💥 You knocked out ${p.name}!`); updateScores(); }
+      if (m.rd === roundId && playing()) { me.score++; toast(cfg.gun ? `🔫 You smashed ${p.name}'s screen!` : `💥 You knocked out ${p.name}!`); updateScores(); }
       return true;
     case 'laughpt':
       if (m.rd === roundId && playing()) { me.score++; toast(`😂 You made ${p.name} laugh! +1`); updateScores(); }
@@ -1294,7 +1296,7 @@ function onHit(p, m) {
   if (me.hidden || now < me.koUntil || now < me.stunUntil) return;
   me.stunUntil = now + 1500;
   buzz();
-  if (cfg.damage && !cfg.paint && playing() && m.rd === roundId) {
+  if (cfg.damage && !cfg.gun && playing() && m.rd === roundId) {
     me.hp--;
     if (me.hp <= 0) {
       me.koUntil = now + 3000;
@@ -1310,9 +1312,9 @@ function onHit(p, m) {
 }
 
 // =====================================================================
-// ---------- paintball ----------
+// ---------- blaster: rapid fire, hits crack the screen (and the victim's view) ----------
 // =====================================================================
-const PAINT_W = 256, PAINT_H = 192, PAINT_OUT = 0.5;   // painted out at 50% coverage
+const PAINT_W = 256, PAINT_H = 192, PAINT_OUT = 0.6;   // screen smashed at 60% cracked
 function seeded(seed) { let a = seed >>> 0; return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
 function makePaintLayer() {
@@ -1327,24 +1329,49 @@ function clearPaint(layer) {
   layer.tex.needsUpdate = true;
   layer.coverage = 0;
 }
-// u,v in 0..1 across the TV screen (v=0 bottom). Same seed => same splat on every device.
-function drawSplat(layer, u, v, color, size, seed) {
-  const r = seeded(seed), g = layer.g;
-  const x = u * PAINT_W, y = (1 - v) * PAINT_H, R = size * PAINT_W;
-  g.fillStyle = '#' + (color >>> 0).toString(16).padStart(6, '0');
-  g.beginPath(); g.arc(x, y, R, 0, Math.PI * 2); g.fill();
-  const blobs = 7 + Math.floor(r() * 6);
-  for (let i = 0; i < blobs; i++) {                       // splatter around the edge
-    const a = r() * Math.PI * 2, d = R * (0.8 + r() * 0.9), br = R * (0.12 + r() * 0.35);
-    g.beginPath(); g.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, br, 0, Math.PI * 2); g.fill();
-  }
-  const drips = 1 + Math.floor(r() * 3);
-  for (let i = 0; i < drips; i++) {                        // runny drips downwards
-    const dx = x + (r() - 0.5) * R * 1.2, w = R * (0.12 + r() * 0.15), len = R * (0.8 + r() * 1.6);
-    g.fillRect(dx - w / 2, y, w, len);
-    g.beginPath(); g.arc(dx, y + len, w * 0.9, 0, Math.PI * 2); g.fill();
-  }
+// A bullet crack at u,v (0..1 across the TV, v=0 at the bottom). Same seed = same crack on every device.
+function drawCrack(layer, u, v, size, seed) {
+  drawCrackOn(layer.g, PAINT_W, PAINT_H, u, v, size, seed, 1);
   layer.tex.needsUpdate = true;
+}
+function drawCrackOn(g, W, H, u, v, size, seed, lw) {
+  const r = seeded(seed);
+  const x = u * W, y = (1 - v) * H, R = size * W;
+  g.save();
+  const frost = g.createRadialGradient(x, y, 0, x, y, R * 0.3);
+  frost.addColorStop(0, 'rgba(255,255,255,0.95)');
+  frost.addColorStop(0.35, 'rgba(225,238,255,0.65)');
+  frost.addColorStop(1, 'rgba(220,235,255,0)');
+  g.fillStyle = frost; g.beginPath(); g.arc(x, y, R * 0.3, 0, Math.PI * 2); g.fill();
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  const n = 7 + Math.floor(r() * 5);
+  const rings = [[], []];
+  const rays = [];
+  for (let i = 0; i < n; i++) {
+    let a = (i / n) * Math.PI * 2 + (r() - 0.5) * 0.5, px = x, py = y;
+    const len = R * (0.55 + r() * 0.75), seg = 6, pts = [[px, py]];
+    for (let s = 1; s <= seg; s++) {
+      a += (r() - 0.5) * 0.45;
+      px += Math.cos(a) * len / seg; py += Math.sin(a) * len / seg;
+      pts.push([px, py]);
+      if (s === 2) rings[0].push([px, py]);
+      if (s === 4) rings[1].push([px, py]);
+    }
+    rays.push(pts);
+  }
+  const stroke = (pts, w) => {
+    g.lineWidth = (w + 2) * lw; g.strokeStyle = 'rgba(0,0,0,0.55)';
+    g.beginPath(); pts.forEach(([a, b], k) => (k ? g.lineTo(a, b) : g.moveTo(a, b))); g.stroke();
+    g.lineWidth = w * lw; g.strokeStyle = 'rgba(255,255,255,0.92)';
+    g.beginPath(); pts.forEach(([a, b], k) => (k ? g.lineTo(a, b) : g.moveTo(a, b))); g.stroke();
+  };
+  for (const pts of rays) stroke(pts, 1.6);
+  for (const ring of rings) for (let i = 0; i < ring.length; i++) {      // the web-like rings between rays
+    if (r() < 0.25) continue;
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    stroke([a, [(a[0] + b[0]) / 2 + (r() - 0.5) * 6 * W / 256, (a[1] + b[1]) / 2 + (r() - 0.5) * 6 * W / 256], b], 1.1);
+  }
+  g.restore();
 }
 const covCanvas = document.createElement('canvas');
 covCanvas.width = 64; covCanvas.height = 48;
@@ -1353,166 +1380,175 @@ function measureCoverage(layer) {
   covCtx.clearRect(0, 0, 64, 48);
   covCtx.drawImage(layer.c, 0, 0, 64, 48);
   const d = covCtx.getImageData(0, 0, 64, 48).data;
-  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 128) n++;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 30) n++;
   layer.coverage = n / (64 * 48);
   return layer.coverage;
 }
 
 let mePaint = null;
-let paintedBy = null;
-// my own view gets the same paint, mirrored (I'm looking out through the glass)
+const myCracks = [];
+// my own view gets the same cracks, mirrored (I'm looking out through the glass)
 const paintView = $('paintView');
 const pvCtx = paintView.getContext('2d');
 function redrawPaintView() {
   paintView.width = innerWidth; paintView.height = innerHeight;
   pvCtx.clearRect(0, 0, paintView.width, paintView.height);
-  if (!mePaint || !cfg.paint) return;
-  pvCtx.save(); pvCtx.translate(paintView.width, 0); pvCtx.scale(-1, 1);
-  pvCtx.drawImage(mePaint.c, 0, 0, paintView.width, paintView.height);
-  pvCtx.restore();
+  if (!mePaint?.coverage || !cfg.gun) { myCracks.length = 0; return; }
+  const lw = Math.max(1, paintView.width / 700);
+  for (const c of myCracks) drawCrackOn(pvCtx, paintView.width, paintView.height, 1 - c.u, c.v, c.s, c.seed, lw);
 }
 addEventListener('resize', redrawPaintView);
 
 function applyPaint(m, fromId) {
-  const target = m.id === peer?.id ? null : remotes.get(m.id);
   if (m.id === peer?.id) {
-    if (!mePaint || performance.now() < me.koUntil) return;
-    drawSplat(mePaint, m.u, m.v, m.c, m.s, m.seed);
+    const now = performance.now();
+    if (!mePaint || now < me.koUntil) return;
+    drawCrack(mePaint, m.u, m.v, m.s, m.seed);
+    myCracks.push({ u: m.u, v: m.v, s: m.s, seed: m.seed });
+    measureCoverage(mePaint);
     redrawPaintView();
+    me.shakeUntil = now + 140;
+    sfx('crack');
     const cov = measureCoverage(mePaint);
-    buzz();
     if (cov >= PAINT_OUT && playing() && m.rd === roundId) {
-      const now = performance.now();
       me.koUntil = now + 3000; me.stunUntil = me.koUntil;
       const by = remotes.get(fromId);
       const c = conns.get(fromId);
       if (c) send(c, { t: 'ko', rd: roundId });
-      toast(`🎨 Painted out by ${by ? by.name : 'someone'}!`);
+      toast(`💥 Screen smashed by ${by ? by.name : 'someone'}!`);
+      buzz();
       setTimeout(respawn, 3000);
     }
-  } else if (target && target.paint) {
-    drawSplat(target.paint, m.u, m.v, m.c, m.s, m.seed);
+  } else {
+    const target = remotes.get(m.id);
+    if (target && target.paint) drawCrack(target.paint, m.u, m.v, m.s, m.seed);
   }
 }
 
-// ----- aiming -----
-const aim = new THREE.Vector2(0, 0);             // the crosshair is fixed in the centre
+// ----- sound: tiny synthesized shot + glass crack -----
+let noiseBuf = null;
+function sfx(kind) {
+  if (!audioCtx || audioCtx.state !== 'running') return;
+  if (!noiseBuf) {
+    noiseBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.25, audioCtx.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const src = audioCtx.createBufferSource(); src.buffer = noiseBuf;
+  const f = audioCtx.createBiquadFilter(); const gn = audioCtx.createGain();
+  const t = audioCtx.currentTime;
+  if (kind === 'shot') { f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 0.7; gn.gain.setValueAtTime(0.18, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.07); }
+  else { f.type = 'highpass'; f.frequency.value = 2500; gn.gain.setValueAtTime(0.35, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.18); }
+  src.connect(f); f.connect(gn); gn.connect(audioCtx.destination);
+  src.start(t); src.stop(t + 0.25);
+}
+
+// ----- aiming (fixed centre crosshair) -----
+const aim = new THREE.Vector2(0, 0);
 const raycaster = new THREE.Raycaster();
+raycaster.far = 90;
 const crosshair = $('crosshair');
-function setAimFromEvent(e) {
-  aim.x = (e.clientX / innerWidth) * 2 - 1;
-  aim.y = -(e.clientY / innerHeight) * 2 + 1;
-  crosshair.style.left = e.clientX + 'px'; crosshair.style.top = e.clientY + 'px';
-}
 let fireQueued = false;
-const paintOn = () => cfg.paint && playing();
-// ----- paintballs -----
-const balls = [];
-const ballGeo = new THREE.SphereGeometry(0.14, 10, 8);
-const floorSplats = [];
-function spawnBall(origin, dir, color, mine, power, seed) {
-  const m = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.3 }));
-  m.position.copy(origin);
-  m.scale.setScalar(1 + power * 0.8);
-  scene.add(m);
-  balls.push({ m, vel: dir.clone().multiplyScalar(46), mine, color, power, seed, life: 1.6 });
-}
-const _o = new THREE.Vector3(), _t = new THREE.Vector3(), _d = new THREE.Vector3();
-function shootPaint(power) {
-  if (me.hidden) { toast('👻 Uncover your camera to shoot'); return; }
-  raycaster.setFromCamera(aim, camera);
-  const hits = raycaster.intersectObjects(scene.children, true).filter((h) => !isMine(h.object));
-  _t.copy(hits.length ? hits[0].point : raycaster.ray.at(60, new THREE.Vector3()));
-  _o.set(me.pos.x + Math.sin(me.rot) * 0.6, 1.5 + me.y, me.pos.z + Math.cos(me.rot) * 0.6);
-  _d.subVectors(_t, _o).normalize();
-  const seed = (Math.random() * 1e9) | 0;
-  spawnBall(_o, _d, myColor, true, power, seed);
-  broadcast({ t: 'ball', o: _o.toArray().map((n) => +n.toFixed(2)), d: _d.toArray().map((n) => +n.toFixed(3)), c: myColor, w: +power.toFixed(2) });
-}
-function isMine(o) { while (o) { if (meParts && o === meParts.group) return true; o = o.parent; } return false; }
+const paintOn = () => cfg.gun && playing();
+let gunHeat = 0;
 
-const _local = new THREE.Vector3(), _prevLocal = new THREE.Vector3();
-function ballHitsScreen(p, prev, cur) {
-  // move the segment into the player's own space; their screen faces +z at z=0.501, centre y=2.3
-  const inv = (v, out) => {
-    out.set(v.x - p.pos.x, v.y - p.y, v.z - p.pos.z);
-    const c = Math.cos(-p.rot), s = Math.sin(-p.rot);
-    const x = out.x * c + out.z * s, z = -out.x * s + out.z * c;
-    out.x = x; out.z = z; return out;
-  };
-  const a = inv(prev, _prevLocal), b = inv(cur, _local);
-  // hit the TV box at all? (for a splash on the casing)
-  const inBox = (q) => Math.abs(q.x) < 0.75 && q.y > 1.7 && q.y < 2.9 && Math.abs(q.z) < 0.5;
-  const inBody = (q) => Math.abs(q.x) < 0.5 && q.y > 0 && q.y < 1.7 && Math.abs(q.z) < 0.35;
-  if (a.z > 0.5 && b.z <= 0.5) {
-    const t = (a.z - 0.5) / (a.z - b.z);
-    const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
-    if (Math.abs(x) < 0.66 && Math.abs(y - 2.3) < 0.5) {
-      return { screen: true, u: Math.min(1, Math.max(0, (x + 0.575) / 1.15)), v: Math.min(1, Math.max(0, (y - 2.3 + 0.43) / 0.86)) };
-    }
+// ----- effects: tracers, sparks, glass, bullet holes -----
+const fxGeo = new THREE.BoxGeometry(0.07, 0.07, 0.07);
+const holeGeo = new THREE.CircleGeometry(0.1, 10);
+const holeMat = new THREE.MeshBasicMaterial({ color: 0x15151a });
+const decals = [];
+function fx(mesh, life, vel) { mesh.userData.fx = true; scene.add(mesh); beams.push({ m: mesh, life, vel, shared: true }); }
+function sparks(p, color = 0xffd166, n = 6) {
+  for (let i = 0; i < n; i++) {
+    const m = new THREE.Mesh(fxGeo, new THREE.MeshBasicMaterial({ color, transparent: true }));
+    m.position.copy(p);
+    fx(m, 0.25 + Math.random() * 0.15, new THREE.Vector3((Math.random() - 0.5) * 8, Math.random() * 6, (Math.random() - 0.5) * 8));
   }
-  if (inBox(b) || inBody(b)) return { screen: false };
+}
+function glass(p) { sparks(p, 0xcfe8ff, 9); sparks(p, 0xffffff, 3); }
+function tracer(a, b) {
+  const len = a.distanceTo(b);
+  const geo = new THREE.CylinderGeometry(0.03, 0.03, len, 5);
+  geo.rotateX(Math.PI / 2); geo.translate(0, 0, len / 2);
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xfff1a8, transparent: true, opacity: 0.9 }));
+  m.position.copy(a); m.lookAt(b); m.userData.fx = true;
+  scene.add(m); beams.push({ m, life: 0.07 });
+}
+function flash(p) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), new THREE.MeshBasicMaterial({ color: 0xfff6d5, transparent: true }));
+  m.position.copy(p); m.userData.fx = true; scene.add(m); beams.push({ m, life: 0.05 });
+}
+function bulletHole(p, n) {
+  const m = new THREE.Mesh(holeGeo, holeMat);
+  m.position.copy(p).addScaledVector(n, 0.02);
+  m.lookAt(m.position.clone().add(n));
+  m.userData.fx = true;
+  scene.add(m); decals.push(m);
+  if (decals.length > 250) scene.remove(decals.shift());
+}
+function clearFloorSplats() { for (const d of decals) scene.remove(d); decals.length = 0; }
+
+function isMine(o) { while (o) { if (meParts && o === meParts.group) return true; o = o.parent; } return false; }
+function ownerOf(o) {
+  while (o) { for (const p of remotes.values()) if (p.parts.group === o) return p; o = o.parent; }
   return null;
 }
+function muzzlePos() {
+  const fx_ = Math.sin(me.rot), fz = Math.cos(me.rot);
+  return new THREE.Vector3(me.pos.x + fx_ * 0.9 - fz * 0.6, 1.15 + me.y, me.pos.z + fz * 0.9 + fx_ * 0.6);
+}
 
-function splashAt(pos, color) {
-  for (let i = 0; i < 6; i++) {
-    const m = new THREE.Mesh(ballGeo, new THREE.MeshBasicMaterial({ color, transparent: true }));
-    m.scale.setScalar(0.4);
-    m.position.copy(pos);
-    scene.add(m);
-    beams.push({ m, life: 0.35, vel: new THREE.Vector3((Math.random() - 0.5) * 6, Math.random() * 5, (Math.random() - 0.5) * 6) });
+const _aimJ = new THREE.Vector2(), _n = new THREE.Vector3();
+let lastSnap = new Map();
+function shootPaint(power = 0) {
+  if (me.hidden) { toast('👻 Uncover your camera to shoot'); return; }
+  const spread = (me.aiming ? 0.006 : 0.02) + gunHeat * 0.03;
+  _aimJ.set(aim.x + (Math.random() - 0.5) * spread, aim.y + (Math.random() - 0.5) * spread * camera.aspect);
+  raycaster.setFromCamera(_aimJ, camera);
+  const muzzle = muzzlePos();
+  let hit = null;
+  for (const h of raycaster.intersectObjects(scene.children, true)) {
+    const o = h.object;
+    if (o.isSprite || o.userData.fx || isMine(o) || !o.visible) continue;
+    if (h.point.clone().sub(muzzle).dot(raycaster.ray.direction) < 0.2) continue;   // behind the gun
+    const owner = ownerOf(o);
+    if (owner && (owner.hidden || owner.ko || !owner.seen)) continue;
+    hit = { h, owner }; break;
   }
-}
-function floorSplat(x, z, color) {
-  const m = new THREE.Mesh(new THREE.CircleGeometry(0.35 + Math.random() * 0.3, 12), new THREE.MeshBasicMaterial({ color }));
-  m.rotation.x = -Math.PI / 2; m.position.set(x, 0.01 + floorSplats.length * 0.00001, z);
-  scene.add(m); floorSplats.push(m);
-  if (floorSplats.length > 150) { const o = floorSplats.shift(); scene.remove(o); o.geometry.dispose(); }
-}
-function clearFloorSplats() { for (const o of floorSplats) { scene.remove(o); o.geometry.dispose(); } floorSplats.length = 0; }
-
-const _prev = new THREE.Vector3();
-function updateBalls(dt) {
-  for (let i = balls.length - 1; i >= 0; i--) {
-    const b = balls[i];
-    b.life -= dt;
-    let dead = b.life <= 0;
-    const steps = 3;
-    for (let s = 0; s < steps && !dead; s++) {
-      _prev.copy(b.m.position);
-      b.vel.y -= 6 * (dt / steps);
-      b.m.position.addScaledVector(b.vel, dt / steps);
-      const q = b.m.position;
-      if (b.mine) {
-        for (const p of remotes.values()) {
-          if (!p.seen || p.hidden || p.ko) continue;
-          const h = ballHitsScreen(p, _prev, q);
-          if (!h) continue;
-          dead = true;
-          splashAt(q, b.color);
-          if (h.screen) {
-            const msg = { t: 'paint', id: p.id, u: +h.u.toFixed(3), v: +h.v.toFixed(3), c: b.color, s: 0.13 + 0.09 * b.power, seed: b.seed, rd: roundId };
-            applyPaint(msg, peer.id);
-            broadcast(msg);
-            zapCam(p);
-          }
-          break;
-        }
-      }
-      if (dead) break;
-      if (q.y <= 0.02) { dead = true; floorSplat(q.x, q.z, b.color); break; }
-      if (Math.abs(q.x) > ARENA - 0.5 || Math.abs(q.z) > ARENA - 0.5) { dead = true; splashAt(q, b.color); break; }
-      for (const o of obstacles) if (q.x > o.minX && q.x < o.maxX && q.z > o.minZ && q.z < o.maxZ && q.y < 5) { dead = true; splashAt(q, b.color); break; }
+  const end = hit ? hit.h.point : raycaster.ray.at(90, new THREE.Vector3());
+  gunHeat = Math.min(1, gunHeat + 0.12);
+  tracer(muzzle, end); flash(muzzle); sfx('shot');
+  let kind = 0;
+  if (hit && hit.owner) {
+    kind = 2;
+    glass(end);
+    if (hit.h.object === hit.owner.parts.screen && hit.h.uv) {
+      const msg = { t: 'paint', id: hit.owner.id, u: +hit.h.uv.x.toFixed(3), v: +hit.h.uv.y.toFixed(3), s: 0.2 + 0.1 * power, seed: (Math.random() * 1e9) | 0, rd: roundId };
+      applyPaint(msg, peer.id);
+      broadcast(msg);
+      const now = performance.now();
+      if (now - (lastSnap.get(hit.owner.id) || 0) > 1500) { lastSnap.set(hit.owner.id, now); zapCam(hit.owner); }
     }
-    if (dead) { scene.remove(b.m); b.m.material.dispose(); balls.splice(i, 1); }
+  } else if (hit) {
+    kind = 1;
+    _n.copy(hit.h.face ? hit.h.face.normal : new THREE.Vector3(0, 1, 0)).transformDirection(hit.h.object.matrixWorld);
+    bulletHole(end, _n); sparks(end);
   }
+  const r2 = (v) => +v.toFixed(2);
+  broadcast({ t: 'shot', o: muzzle.toArray().map(r2), e: end.toArray().map(r2), k: kind, n: kind === 1 ? _n.toArray().map(r2) : undefined });
+}
+
+function updateBalls(dt) {
+  gunHeat = Math.max(0, gunHeat - dt * 1.4);
+  crosshair.style.transform = `scale(${(me.aiming ? 0.6 : 1) * (1 + gunHeat * 0.8)})`;
 }
 
 function onPaintData(p, m) {
   switch (m.t) {
-    case 'ball': {
-      spawnBall(new THREE.Vector3().fromArray(m.o), new THREE.Vector3().fromArray(m.d), m.c, false, m.w || 0, 0);
+    case 'shot': {
+      const a = new THREE.Vector3().fromArray(m.o), b = new THREE.Vector3().fromArray(m.e);
+      tracer(a, b); flash(a);
+      if (m.k === 1 && m.n) { bulletHole(b, new THREE.Vector3().fromArray(m.n)); sparks(b); }
+      else if (m.k === 2) glass(b);
       return true;
     }
     case 'paint': applyPaint(m, p.id); return true;
@@ -1794,11 +1830,11 @@ function frame(now) {
     me.zapCooldown -= dt;
     let fire = inp.zap || fireQueued;
     fireQueued = false;
-    if (cfg.mouth && playing() && facePresent()) fire = mouthFire() && !ko;   // mouth replaces the button
+    if (cfg.mouth && playing() && facePresent()) fire = (paintOn() ? faceState.jaw > 0.45 : mouthFire()) && !ko;   // mouth replaces the button
     if (fire && me.zapCooldown <= 0 && !stunned && !ko) {
       const power = cfg.shout && playing() ? loud : 0;
       me.rot = camYaw; me.lastShot = now;               // shots go where the crosshair is
-      if (paintOn()) { me.zapCooldown = 0.3; shootPaint(power); }
+      if (paintOn()) { me.zapCooldown = 0.1; shootPaint(power); }
       else { me.zapCooldown = 0.6; tryZap(power); }
     }
     crosshair.classList.toggle('hidden', !started || overlayOpen());
@@ -1809,15 +1845,17 @@ function frame(now) {
     meParts.group.position.set(me.pos.x, me.y, me.pos.z);
     meParts.group.rotation.y = me.rot;
     animateBody(meParts, me.walk, moveAmt);
+    meParts.gun.visible = paintOn();
+    if (paintOn()) { meParts.armR.rotation.x = -1.45; meParts.armL.rotation.x = -1.2; }
     const mu = meParts.screenMat.uniforms;
     mu.staticAmt.value = stunned ? 0.75 : 0;
     mu.time.value = time;
-    mu.damage.value = cfg.damage && !cfg.paint && roundId ? 1 - me.hp / MAX_HP : 0;
+    mu.damage.value = cfg.damage && !cfg.gun && roundId ? 1 - me.hp / MAX_HP : 0;
     mu.power.value += ((ko ? 0 : 1) - mu.power.value) * Math.min(1, dt * 6);
     setOpacity(meParts, me.hidden ? 0.3 : adsT > 0.5 ? 0.45 : 1);
     $('selfwrap').classList.toggle('ghost', me.hidden);
-    $('hearts').textContent = !roundId ? '' : cfg.paint
-      ? (ko ? '🎨 Painted out!' : `🎨 ${Math.round((mePaint?.coverage || 0) * 100)}% / ${PAINT_OUT * 100}%`)
+    $('hearts').textContent = !roundId ? '' : cfg.gun
+      ? (ko ? '💥 Screen smashed!' : `🔫 Screen ${Math.round((mePaint?.coverage || 0) * 100)}% cracked / ${PAINT_OUT * 100}%`)
       : cfg.damage ? (ko ? '💥 KO' : '❤️'.repeat(Math.max(0, me.hp))) : '';
     $('selfwrap').classList.toggle('stunned', stunned);
 
@@ -1831,6 +1869,7 @@ function frame(now) {
     camera.position.lerp(camPos, 1 - Math.exp(-dt * 18));
     lookAt.set(camera.position.x + dx * 10, camera.position.y + dy * 10, camera.position.z + dz * 10);
     camera.lookAt(lookAt);
+    if (now < (me.shakeUntil || 0)) { camera.position.x += (Math.random() - 0.5) * 0.14; camera.position.y += (Math.random() - 0.5) * 0.14; }
     let fov = 62 - 20 * adsT + (sprinting ? 6 : 0);
     if (camera.aspect < 1.2) {                          // portrait phones: keep a decent sideways view
       const h = THREE.MathUtils.degToRad(fov * 1.25);
@@ -1867,10 +1906,12 @@ function frame(now) {
     p.parts.group.rotation.y = p.rot;
     p.parts.group.visible = p.seen;
     animateBody(p.parts, p.walk, Math.min(1, sp / 7));
+    p.parts.gun.visible = paintOn();
+    if (paintOn()) { p.parts.armR.rotation.x = -1.45; p.parts.armL.rotation.x = -1.2; }
     const u = p.parts.screenMat.uniforms;
     u.time.value = time;
     u.staticAmt.value = p.stunned ? 0.75 : (u.hasVideo.value ? 0 : 0.15);
-    u.damage.value = cfg.damage && !cfg.paint && roundId ? 1 - (p.hp ?? MAX_HP) / MAX_HP : 0;
+    u.damage.value = cfg.damage && !cfg.gun && roundId ? 1 - (p.hp ?? MAX_HP) / MAX_HP : 0;
     // power-off look if knocked out or we haven't heard from them for a while
     const quiet = now - p.lastMsg > 4000;
     u.power.value += ((quiet || p.ko ? 0 : 1) - u.power.value) * Math.min(1, dt * 6);
@@ -1894,9 +1935,9 @@ function frame(now) {
   for (let i = beams.length - 1; i >= 0; i--) {
     const b = beams[i];
     b.life -= dt;
-    b.m.material.opacity = Math.max(0, b.life / 0.25);
+    b.m.material.opacity = Math.max(0, Math.min(1, b.life / 0.12));
     if (b.vel) { b.vel.y -= 15 * dt; b.m.position.addScaledVector(b.vel, dt); }
-    if (b.life <= 0) { scene.remove(b.m); if (!b.vel) b.m.geometry.dispose(); b.m.material.dispose(); beams.splice(i, 1); }
+    if (b.life <= 0) { scene.remove(b.m); if (!b.shared) b.m.geometry.dispose(); b.m.material.dispose(); beams.splice(i, 1); }
   }
 
   if (!qs.has('norender')) renderer.render(scene, camera);
@@ -1910,4 +1951,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { get pong() { return pong; }, pongBall: () => pongBall, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { get decals() { return decals.length; }, get pong() { return pong; }, pongBall: () => pongBall, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };

@@ -34,7 +34,7 @@ The host (👑) picks what's on for each round in **Round settings** (⚙ button
 | 😂 Try not to laugh | Smile and the nearest player gets a point. |
 | 🗿 Freeze! | Every 15–30 s "FREEZE!" is called – move, or let your face move, and lose a point. |
 | 📣 Shout power | The louder you shout as you zap, the further and bigger the zap. |
-| 🎨 Paintball | Replaces the zap. Aim with the mouse (click to fire) or tap where you want to shoot on a phone. Paint lands on the TV screen *and* smears the victim's own view; cover 50% of a screen to paint them out (scores like a knockout). |
+| 🔫 Blaster | Replaces the zap. Hold to fire ~10 shots a second (hitscan, tracers, muzzle flash). Hits crack the victim's TV screen *and* their own view; bullets leave holes and sparks on the level. At 60% cracked their screen is smashed (scores like a knockout). Right-click aim tightens the spread; holding the trigger widens it. |
 
 ## 🏓 TV Pong (mini-game)
 Pick **TV Pong** as the game in Round settings. Your TV head is your bat – the ball bounces off your live face. The table grows with the room: one player gets a practice box, two play classic rectangle pong, and 3–6 players get a triangle, square, pentagon or hexagon with one goal side each. Slide with A/D, arrows, the mouse, the left stick, or by dragging on a phone. Hit the edge of your TV to angle the ball. If the ball gets past someone, whoever touched it last scores. The ball speeds up with every hit. Players who join mid-game spectate until the next round.
