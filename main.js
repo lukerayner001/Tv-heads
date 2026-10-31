@@ -37,7 +37,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-if (qs.has('whitetest') && !safeGfx) { scene.background = new THREE.Color(0xffffff); scene.overrideMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff }); }   // test hook: fake a broken driver
+if (qs.has('whitetest') && !safeGfx) { scene.background = new THREE.Color(0xffffff); scene.overrideMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }); }   // test hook: fake a broken driver
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 450);
 camera.position.set(0, 6, -10);
