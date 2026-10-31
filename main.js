@@ -37,62 +37,248 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1b1f3b);
-scene.fog = new THREE.Fog(0x1b1f3b, 30, 70);
 if (qs.has('whitetest') && !safeGfx) { scene.background = new THREE.Color(0xffffff); scene.overrideMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff }); }   // test hook: fake a broken driver
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 450);
 camera.position.set(0, 6, -10);
 
-scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x404060, 1.2));
-const sun = new THREE.DirectionalLight(0xffffff, 2.0);
-sun.position.set(12, 25, 8);
+// ---------- level: rooftop TV studio at dusk (all textures drawn in code) ----------
+const TEXS = isTouch || safeGfx ? 256 : 512;
+const maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1);
+function canvasTex(w, h, draw, rx = 1, ry = 1, srgb = true) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); t.anisotropy = maxAniso;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function speckle(g, w, h, n, light, dark, a = 0.08) {
+  for (let i = 0; i < n; i++) {
+    g.fillStyle = Math.random() < 0.5 ? `rgba(${light},${a})` : `rgba(${dark},${a})`;
+    const s = Math.random() * 2 + 0.5; g.fillRect(Math.random() * w, Math.random() * h, s, s);
+  }
+}
+function blotches(g, w, h, n, rgb, a) {
+  for (let i = 0; i < n; i++) {
+    const x = Math.random() * w, y = Math.random() * h, r = (0.05 + Math.random() * 0.15) * w;
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, `rgba(${rgb},${a})`); gr.addColorStop(1, `rgba(${rgb},0)`);
+    g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+}
+function hazard(g, x, y, w, h, stripe) {
+  g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
+  g.fillStyle = '#f2b705'; g.fillRect(x, y, w, h);
+  g.fillStyle = '#161616';
+  for (let i = -h; i < w + h; i += stripe * 2) { g.beginPath(); g.moveTo(x + i, y + h); g.lineTo(x + i + stripe, y + h); g.lineTo(x + i + stripe + h, y); g.lineTo(x + i + h, y); g.fill(); }
+  g.restore();
+}
+const S = TEXS;
+const floorTex = canvasTex(S, S, (g, w, h) => {
+  g.fillStyle = '#4b4f60'; g.fillRect(0, 0, w, h);
+  blotches(g, w, h, 18, '30,32,44', 0.18);
+  blotches(g, w, h, 10, '120,124,140', 0.10);
+  speckle(g, w, h, w * 14, '255,255,255', '0,0,0', 0.07);
+  g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = w / 170;            // slab seams
+  for (const p of [0, w / 2]) { g.beginPath(); g.moveTo(p, 0); g.lineTo(p, h); g.stroke(); g.beginPath(); g.moveTo(0, p); g.lineTo(w, p); g.stroke(); }
+  g.strokeStyle = 'rgba(255,255,255,0.06)'; g.lineWidth = w / 340;
+  for (const p of [w / 340 * 2, w / 2 + w / 340 * 2]) { g.beginPath(); g.moveTo(p, 0); g.lineTo(p, h); g.stroke(); g.beginPath(); g.moveTo(0, p); g.lineTo(w, p); g.stroke(); }
+  g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 1;                  // hairline cracks
+  for (let i = 0; i < 5; i++) { let x = Math.random() * w, y = Math.random() * h; g.beginPath(); g.moveTo(x, y); for (let k = 0; k < 6; k++) { x += (Math.random() - 0.5) * w * 0.08; y += (Math.random() - 0.5) * w * 0.08; g.lineTo(x, y); } g.stroke(); }
+}, 8, 8);
+const brickTex = canvasTex(S, S / 2, (g, w, h) => {
+  g.fillStyle = '#2a2222'; g.fillRect(0, 0, w, h);                       // mortar
+  const rows = 8, bw = w / 4, bh = h / rows, m = Math.max(2, w / 128);
+  for (let r = 0; r < rows; r++) for (let c = -1; c < 5; c++) {
+    const x = c * bw + (r % 2 ? bw / 2 : 0), y = r * bh;
+    const t = Math.random();
+    g.fillStyle = `rgb(${110 + t * 45 | 0},${48 + t * 22 | 0},${38 + t * 14 | 0})`;
+    g.fillRect(x + m / 2, y + m / 2, bw - m, bh - m);
+    g.fillStyle = 'rgba(255,255,255,0.06)'; g.fillRect(x + m / 2, y + m / 2, bw - m, m);
+  }
+  speckle(g, w, h, w * 6, '255,220,200', '0,0,0', 0.1);
+  const grime = g.createLinearGradient(0, 0, 0, h);
+  grime.addColorStop(0, 'rgba(0,0,0,0)'); grime.addColorStop(1, 'rgba(10,8,12,0.55)');
+  g.fillStyle = grime; g.fillRect(0, 0, w, h);
+}, 13, 1);
+const crateTex = canvasTex(S / 2, S / 2, (g, w, h) => {
+  g.fillStyle = '#a3713d'; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 5; i++) {                                             // planks
+    const y = (i * h) / 5, t = Math.random();
+    g.fillStyle = `rgb(${150 + t * 30 | 0},${100 + t * 20 | 0},${55 + t * 10 | 0})`; g.fillRect(0, y + 1, w, h / 5 - 2);
+    g.strokeStyle = 'rgba(80,45,15,0.35)'; g.lineWidth = 1;
+    for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(0, y + Math.random() * h / 5); g.bezierCurveTo(w / 3, y + Math.random() * h / 5, w * 2 / 3, y + Math.random() * h / 5, w, y + Math.random() * h / 5); g.stroke(); }
+  }
+  const f = w * 0.11;                                                        // frame + brace
+  g.fillStyle = '#7a4f24';
+  g.fillRect(0, 0, w, f); g.fillRect(0, h - f, w, f); g.fillRect(0, 0, f, h); g.fillRect(w - f, 0, f, h);
+  g.save(); g.translate(w / 2, h / 2); g.rotate(-Math.atan2(h, w)); g.fillRect(-w * 0.7, -f / 2, w * 1.4, f); g.restore();
+  g.strokeStyle = 'rgba(40,20,5,0.6)'; g.lineWidth = 2; g.strokeRect(f, f, w - 2 * f, h - 2 * f); g.strokeRect(1, 1, w - 2, h - 2);
+  g.fillStyle = '#3b3b3b';
+  for (const [x, y] of [[f / 2, f / 2], [w - f / 2, f / 2], [f / 2, h - f / 2], [w - f / 2, h - f / 2]]) { g.beginPath(); g.arc(x, y, w / 80 + 1, 0, 7); g.fill(); }
+  speckle(g, w, h, w * 4, '255,230,200', '40,20,0', 0.08);
+});
+const pillarTex = canvasTex(S / 2, S, (g, w, h) => {
+  g.fillStyle = '#6d7488'; g.fillRect(0, 0, w, h);
+  blotches(g, w, h, 8, '40,44,60', 0.25);
+  speckle(g, w, h, w * 12, '255,255,255', '0,0,0', 0.08);
+  hazard(g, 0, h * 0.82, w, h * 0.18, w / 7);
+  g.fillStyle = 'rgba(20,22,30,0.6)'; g.fillRect(0, 0, w, h * 0.04);
+  g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(0, h * 0.8, w, h * 0.02);
+});
+const hazardTex = canvasTex(S, S / 8, (g, w, h) => hazard(g, 0, 0, w, h, h * 0.9), 26, 1);
+const windowTex = canvasTex(S / 2, S / 2, (g, w, h) => {
+  g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+  const cols = 8, rows = 12, cw = w / cols, rh = h / rows;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    if (Math.random() < 0.45) continue;
+    const warm = Math.random() < 0.75;
+    g.fillStyle = warm ? `rgba(255,${190 + Math.random() * 50 | 0},120,${0.5 + Math.random() * 0.5})` : `rgba(120,220,255,${0.5 + Math.random() * 0.5})`;
+    g.fillRect(c * cw + cw * 0.25, r * rh + rh * 0.25, cw * 0.5, rh * 0.45);
+  }
+});
+
+// lights: low warm sun + cool fill
+scene.background = new THREE.Color(0x1a1433);
+scene.fog = new THREE.Fog(0x2a1d47, 45, 170);
+scene.add(new THREE.HemisphereLight(0x9fb1ff, 0x3a2a4a, 1.15));
+const sun = new THREE.DirectionalLight(0xffd2a1, 2.3);
+sun.position.set(-22, 20, -14);
 sun.castShadow = true;
 sun.shadow.mapSize.set(isTouch ? 512 : 1024, isTouch ? 512 : 1024);
-Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 70 });
+Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 80 });
+sun.shadow.bias = -0.0008;
 scene.add(sun);
+const fill = new THREE.DirectionalLight(0x7fa8ff, 0.55);
+fill.position.set(20, 12, 18);
+scene.add(fill);
 
-// floor
+// sky dome with a sunset glow and stars
 {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d');
-  g.fillStyle = '#2b3160'; g.fillRect(0, 0, 256, 256);
-  g.fillStyle = '#323a72'; g.fillRect(0, 0, 128, 128); g.fillRect(128, 128, 128, 128);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(13, 13);
-  t.colorSpace = THREE.SRGBColorSpace;
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ map: t, roughness: 0.9 }));
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(170, 48, 32), new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `varying vec3 vP;
+      float h(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 45758.5); }
+      void main(){
+        vec3 d = normalize(vP);                       // normalise per pixel (per vertex gives triangle artefacts)
+        float y = d.y;
+        vec3 top = vec3(0.04, 0.05, 0.16), mid = vec3(0.24, 0.11, 0.36), hor = vec3(1.0, 0.47, 0.33);
+        float sunSide = max(0.0, dot(normalize(vec3(d.x, 0.0, d.z)), normalize(vec3(-22.0, 0.0, -14.0))));
+        vec3 c = mix(mid, top, smoothstep(0.08, 0.6, y));
+        c = mix(hor * (0.55 + 0.45 * sunSide), c, smoothstep(-0.02, 0.22, y));
+        if (y < -0.02) c = vec3(0.10, 0.07, 0.16);
+        vec2 g = floor(d.xz / max(y, 0.2) * 260.0);   // star grid projected onto the sky
+        float s = step(0.9975, h(g)) * smoothstep(0.25, 0.55, y) * (0.5 + 0.5 * h(g + 7.0));
+        c += vec3(s);
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  }));
+  sky.renderOrder = -1;
+  scene.add(sky);
+}
+
+// city skyline around the roof
+{
+  const N = 70;
+  const mat = new THREE.MeshStandardMaterial({ color: 0x15132a, roughness: 0.9, emissive: 0xffffff, emissiveMap: windowTex, emissiveIntensity: 0.9 });
+  const city = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, N);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3();
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2 + Math.random() * 0.05, r = 70 + Math.random() * 45;
+    const w = 6 + Math.random() * 10, hgt = 8 + Math.random() * 40;
+    ps.set(Math.cos(a) * r, hgt / 2 - 12, Math.sin(a) * r);
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a);
+    sc.set(w, hgt, w * (0.6 + Math.random() * 0.6));
+    city.setMatrixAt(i, m4.compose(ps, q, sc));
+  }
+  scene.add(city);
+}
+
+// roof: floor, markings, brick walls with neon tops
+{
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.92 }));
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
-  // walls
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x5a4fcf, roughness: 0.6 });
-  for (const [x, z, w, d] of [[0, ARENA, ARENA * 2, 1], [0, -ARENA, ARENA * 2, 1], [ARENA, 0, 1, ARENA * 2], [-ARENA, 0, 1, ARENA * 2]]) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.5, d), wallMat);
-    m.position.set(x, 0.75, z);
-    m.receiveShadow = true;
-    scene.add(m);
+  const paint = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.75 });
+  for (const [r0, r1] of [[5.6, 6.0], [1.2, 1.5]]) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(r0, r1, 48), paint);
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.012; ring.receiveShadow = true; scene.add(ring);
   }
+  for (const [x, z, w, d] of [[0, ARENA - 1.6, ARENA * 2 - 2, 1.2], [0, -(ARENA - 1.6), ARENA * 2 - 2, 1.2], [ARENA - 1.6, 0, 1.2, ARENA * 2 - 2], [-(ARENA - 1.6), 0, 1.2, ARENA * 2 - 2]]) {
+    const band = new THREE.Mesh(new THREE.PlaneGeometry(w > d ? w : d, 1.2), new THREE.MeshStandardMaterial({ map: hazardTex, roughness: 0.8 }));
+    band.rotation.x = -Math.PI / 2; if (d > w) band.rotation.z = Math.PI / 2;
+    band.position.set(x, 0.011, z); band.receiveShadow = true; scene.add(band);
+  }
+  const wallMat = new THREE.MeshStandardMaterial({ map: brickTex, roughness: 0.85 });
+  const capMat = new THREE.MeshStandardMaterial({ color: 0x3a3d4a, roughness: 0.7 });
+  const neon = [0xff4fd8, 0x3ef0ff, 0xff4fd8, 0x3ef0ff];
+  const WH = 3.6;
+  [[0, ARENA, ARENA * 2 + 1, 1], [0, -ARENA, ARENA * 2 + 1, 1], [ARENA, 0, 1, ARENA * 2 + 1], [-ARENA, 0, 1, ARENA * 2 + 1]].forEach(([x, z, w, d], i) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, WH, d), wallMat);
+    m.position.set(x, WH / 2, z); m.receiveShadow = true; m.castShadow = true; scene.add(m);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.2, 0.25, d + 0.2), capMat);
+    cap.position.set(x, WH + 0.12, z); scene.add(cap);
+    const inX = -Math.sign(x) * 0.62, inZ = -Math.sign(z) * 0.62;
+    const tube = new THREE.Mesh(new THREE.BoxGeometry(w > d ? w - 1 : 0.12, 0.12, d > w ? d - 1 : 0.12), new THREE.MeshBasicMaterial({ color: neon[i] }));
+    tube.position.set(x + inX, WH - 0.25, z + inZ); scene.add(tube);
+    const glow = new THREE.Mesh(new THREE.BoxGeometry(w > d ? w - 1 : 0.5, 0.5, d > w ? d - 1 : 0.5), new THREE.MeshBasicMaterial({ color: neon[i], transparent: true, opacity: 0.18, depthWrite: false, blending: THREE.AdditiveBlending }));
+    glow.position.copy(tube.position); scene.add(glow);
+  });
 }
 
 // obstacles (axis-aligned boxes used for collision)
 const obstacles = [];
+const decorScreens = [];
 {
-  const crateMat = new THREE.MeshStandardMaterial({ color: 0xc58b4e, roughness: 0.8 });
-  const pillarMat = new THREE.MeshStandardMaterial({ color: 0x8ecae6, roughness: 0.5 });
+  const crateMat = new THREE.MeshStandardMaterial({ map: crateTex, roughness: 0.85 });
+  const pillarMat = new THREE.MeshStandardMaterial({ map: pillarTex, roughness: 0.75 });
   const layout = [
     [-8, -6, 3, 3, 2, crateMat], [9, 7, 3, 3, 2, crateMat], [-12, 12, 2, 6, 2.5, crateMat], [14, -12, 6, 2, 2.5, crateMat],
     [0, 0, 2, 2, 5, pillarMat], [-17, -15, 2, 2, 5, pillarMat], [18, 16, 2, 2, 5, pillarMat], [3, -16, 4, 2, 1.5, crateMat],
     [-3, 17, 4, 2, 1.5, crateMat],
   ];
   for (const [x, z, w, d, h, mat] of layout) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    let m;
+    if (mat === crateMat && (w !== d)) {
+      // long crates: a row of square crates so the wood texture isn't stretched
+      const n = Math.round(Math.max(w, d) / Math.min(w, d)), s = Math.min(w, d);
+      m = new THREE.Group();
+      for (let k = 0; k < n; k++) {
+        const c = new THREE.Mesh(new THREE.BoxGeometry(s, h, s), mat);
+        const off = (k - (n - 1) / 2) * s;
+        c.position.set(w > d ? off : 0, 0, d > w ? off : 0);
+        c.rotation.y = (Math.random() - 0.5) * 0.06;
+        c.castShadow = c.receiveShadow = true; m.add(c);
+      }
+    } else {
+      m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.castShadow = m.receiveShadow = true;
+    }
     m.position.set(x, h / 2, z);
-    m.castShadow = m.receiveShadow = true;
     scene.add(m);
     obstacles.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
+  }
+  // stacks of old CRT TVs in the corners (screens get wired up once the screen shader exists)
+  const casings = [0x6b4a2f, 0x8a8f99, 0x3a3a40, 0xb5a27a];
+  for (const [cx, cz] of [[ARENA - 3.2, ARENA - 3.2], [-(ARENA - 3.2), ARENA - 3.2], [ARENA - 3.2, -(ARENA - 3.2)], [-(ARENA - 3.2), -(ARENA - 3.2)]]) {
+    const face = Math.atan2(-cx, -cz);
+    const stack = [[-0.95, 0, 0], [0.95, 0, 0], [0, 1.25, 0.1], [-0.95, 2.5, 0], [0.95, 2.5, -0.1]].slice(0, 3 + Math.floor(Math.random() * 3));
+    const g = new THREE.Group();
+    for (const [x, y, rz] of stack) {
+      const tv = new THREE.Group();
+      const box = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.25, 1.3), new THREE.MeshStandardMaterial({ color: casings[Math.floor(Math.random() * 4)], roughness: 0.5 }));
+      box.castShadow = box.receiveShadow = true; tv.add(box);
+      const scr = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.0));
+      scr.position.z = 0.66; tv.add(scr); decorScreens.push(scr);
+      tv.position.set(x, y + 0.625, 0); tv.rotation.z = rz; tv.rotation.y = (Math.random() - 0.5) * 0.3;
+      g.add(tv);
+    }
+    g.position.set(cx, 0, cz); g.rotation.y = face;
+    scene.add(g);
+    obstacles.push({ minX: cx - 2.2, maxX: cx + 2.2, minZ: cz - 2.2, maxZ: cz + 2.2 });
   }
 }
 
@@ -1629,6 +1815,26 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
 });
 renderer.domElement.addEventListener('webglcontextrestored', () => { $('gfxMsg').classList.add('hidden'); toast('Graphics recovered'); });
 
+// ---------- corner TV stacks: static, test cards, and now and then someone's live face ----------
+for (const scr of decorScreens) scr.material = makeScreenMaterial();
+let decorT = 0;
+function updateDecor(time, dt) {
+  decorT -= dt;
+  const feeds = [...remotes.values()].filter((p) => p.video).map((p) => p.video);
+  if (meVideo) feeds.push(meVideo);
+  for (const scr of decorScreens) {
+    const u = scr.material.uniforms;
+    u.time.value = time;
+    if (decorT <= 0) {
+      const r = Math.random();
+      if (r < 0.35 && feeds.length) { const f = feeds[Math.floor(Math.random() * feeds.length)]; u.map.value = f.tex; u.hasVideo.value = 1; scr.userData.st = 0.1; }
+      else { u.map.value = cardTex; u.hasVideo.value = 0; scr.userData.st = r < 0.65 ? 0.95 : 0.05; }
+    }
+    u.staticAmt.value = scr.userData.st + (Math.random() < 0.03 ? 0.4 : 0);   // the odd flicker
+  }
+  if (decorT <= 0) decorT = 5 + Math.random() * 4;
+}
+
 // ---------- animate ----------
 function animateBody(parts, walk, speed) {
   const a = Math.sin(walk) * 0.6 * speed;
@@ -1785,6 +1991,7 @@ function frame(now) {
   }
 
   updateBillboards(time);
+  updateDecor(time, dt);
   updateBalls(dt);
   flushView();
   checkWin();
