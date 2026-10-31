@@ -296,28 +296,22 @@ function recolor(p, color) {
 
 // ---------- networking ----------
 // ---------- connection helpers (STUN finds a direct route; TURN relays when there isn't one) ----------
-// Free relay from Metered Open Relay: fill in your app name + API key from dashboard.metered.ca
-const METERED_APP = '';
-const METERED_KEY = '';
-let iceServers = [
+// Relay (TURN) for players whose networks block a direct link. ExpressTURN free tier, 1 TB/month.
+const iceServers = [
   { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   { urls: 'stun:stun.cloudflare.com:3478' },
+  {
+    urls: ['turn:free.expressturn.com:3478?transport=udp', 'turn:free.expressturn.com:3478?transport=tcp'],
+    username: '000000002108901705',
+    credential: '+dyhhWeT4XsCsbLO6yWExNws2pM=',
+  },
 ];
-let iceLoaded = false;
-async function loadIce() {
-  if (iceLoaded) return;
-  iceLoaded = true;
-  if (!METERED_APP || !METERED_KEY) return;
-  try {
-    const r = await fetch(`https://${METERED_APP}.metered.live/api/v1/turn/credentials?apiKey=${METERED_KEY}`);
-    const turn = await r.json();
-    if (Array.isArray(turn) && turn.length) iceServers = [...iceServers, ...turn];
-  } catch (e) { console.warn('TURN credentials failed', e); }
-}
+async function loadIce() {}
 const hasRelay = () => iceServers.some((s) => [].concat(s.urls).some((u) => String(u).startsWith('turn')));
 
 function peerOptions() {
   const o = { debug: 1, config: { iceServers } };
+  if (qs.has('relay')) o.config.iceTransportPolicy = 'relay';   // ?relay forces everything through the relay (for testing it)
   if (qs.get('peerhost')) {          // only for local testing
     o.host = qs.get('peerhost'); o.port = +qs.get('peerport') || 9000; o.path = '/'; o.secure = false;
     o.config = { iceServers: [] };
@@ -453,9 +447,25 @@ function updateStatus() {
   updateScores();
 }
 
+// Keep each outgoing video small: plenty for a TV screen, and it makes the free relay allowance last.
+const MAX_VIDEO_BITRATE = 200_000;   // bits per second
+function capVideo(call) {
+  const pc = call.peerConnection;
+  if (!pc) return;
+  for (const sender of pc.getSenders()) {
+    if (!sender.track || sender.track.kind !== 'video') continue;
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = MAX_VIDEO_BITRATE;
+    params.encodings[0].maxFramerate = 15;
+    sender.setParameters(params).catch(() => {});
+  }
+}
+
 function setupCall(call) {
   calls.set(call.peer, call);
   call.on('stream', (stream) => {
+    capVideo(call);
     const p = ensureRemote(call.peer);
     attachVoice(p, stream);
     if (p.video) return;
@@ -936,4 +946,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { remotes, me, conns, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { calls, remotes, me, conns, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };

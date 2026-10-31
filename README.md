@@ -18,7 +18,7 @@ A zap fills the other player's screen with static and stuns them.
 
 ## How it works
 - **Three.js** renders the 3D arena. Each player's webcam stream becomes a `VideoTexture` on their TV screen (CRT shader with scanlines and static).
-- **WebRTC via PeerJS** sends webcam video and game data directly between players. The host's room code is used only to introduce players to each other. PeerJS's free public lobby and relay servers are used by default.
+- **WebRTC via PeerJS** sends webcam video and game data directly between players. The host's room code is used only to introduce players to each other. The PeerJS public lobby server introduces players; an ExpressTURN relay (free tier) carries connections that can't go direct. Video is capped at ~200 kbps / 15 fps per stream. Add `?relay` to the URL to force the relay for testing.
 - Everything is bundled into one self-contained `index.html`.
 
 ## Develop

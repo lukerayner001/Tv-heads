@@ -1,0 +1,11 @@
+import { createRequire } from 'module'; const { chromium } = createRequire(import.meta.url)(process.env.PWPATH);
+const b = await chromium.launch({ args: ['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--disable-features=WebRtcHideLocalIpsWithMdns','--use-gl=swiftshader','--enable-unsafe-swiftshader'] });
+const url = 'http://127.0.0.1:8080/tv-heads.html?norender&peerhost=127.0.0.1&peerport=9000';
+const errs=[]; const mk = async () => { const p = await (await b.newContext()).newPage(); p.on('pageerror', e=>errs.push(e.message)); await p.goto(url); return p; };
+const A = await mk(), B = await mk();
+await A.click('#hostBtn'); await A.waitForFunction(() => document.getElementById('roomcode').textContent.length===4);
+await B.fill('#code', await A.textContent('#roomcode')); await B.click('#joinBtn');
+await A.waitForFunction(() => [...window.__tv.remotes.values()].some(p => p.video), null, {timeout:20000});
+await A.waitForTimeout(2000);
+for (const [n,pg] of [['A',A],['B',B]]) console.log(n, await pg.evaluate(() => [...window.__tv.calls.values()].map(c => c.peerConnection.getSenders().filter(s=>s.track?.kind==='video').map(s => JSON.stringify(s.getParameters().encodings[0])))));
+console.log('errors', errs); await b.close();
