@@ -37,7 +37,6 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-if (qs.has('whitetest') && !safeGfx) { scene.background = new THREE.Color(0xffffff); scene.overrideMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }); }   // test hook: fake a broken driver
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 450);
 camera.position.set(0, 6, -10);
@@ -142,6 +141,7 @@ const windowTex = canvasTex(S / 2, S / 2, (g, w, h) => {
 // lights: low warm sun + cool fill
 scene.background = new THREE.Color(0x1a1433);
 scene.fog = new THREE.Fog(0x2a1d47, 45, 170);
+if (qs.has('whitetest') && !safeGfx) { scene.background = new THREE.Color(0xffffff); scene.overrideMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, side: THREE.DoubleSide }); }   // test hook: fake a broken driver
 scene.add(new THREE.HemisphereLight(0x9fb1ff, 0x3a2a4a, 1.15));
 const sun = new THREE.DirectionalLight(0xffd2a1, 2.3);
 sun.position.set(-22, 20, -14);
