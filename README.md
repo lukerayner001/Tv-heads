@@ -36,6 +36,9 @@ The host (👑) picks what's on for each round in **Round settings** (⚙ button
 | 📣 Shout power | The louder you shout as you zap, the further and bigger the zap. |
 | 🎨 Paintball | Replaces the zap. Aim with the mouse (click to fire) or tap where you want to shoot on a phone. Paint lands on the TV screen *and* smears the victim's own view; cover 50% of a screen to paint them out (scores like a knockout). |
 
+## 🏓 TV Pong (mini-game)
+Pick **TV Pong** as the game in Round settings. Your TV head is your bat – the ball bounces off your live face. The table grows with the room: one player gets a practice box, two play classic rectangle pong, and 3–6 players get a triangle, square, pentagon or hexagon with one goal side each. Slide with A/D, arrows, the mouse, the left stick, or by dragging on a phone. Hit the edge of your TV to angle the ball. If the ball gets past someone, whoever touched it last scores. The ball speeds up with every hit. Players who join mid-game spectate until the next round.
+
 ## How it works
 - **Three.js** renders the 3D arena. Each player's webcam stream becomes a `VideoTexture` on their TV screen (CRT shader with scanlines and static).
 - **WebRTC via PeerJS** sends webcam video and game data directly between players. The host's room code is used only to introduce players to each other. The PeerJS public lobby server introduces players; an ExpressTURN relay (free tier) carries connections that can't go direct. Video is capped at ~200 kbps / 15 fps per stream. Add `?relay` to the URL to force the relay for testing.
