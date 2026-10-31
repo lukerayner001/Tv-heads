@@ -57,6 +57,9 @@
   #zapBtn { right: 24px; bottom: calc(max(24px, env(safe-area-inset-bottom)) + 40px); background: #e9c46a; color: #222; width: 96px; height: 96px; }
   #jumpBtn { right: 130px; bottom: calc(max(24px, env(safe-area-inset-bottom)) + 10px); background: #457b9d; }
   @media (pointer: coarse) { .keys { display: none; } #selfwrap { width: 96px; } }
+  #paintView { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .93; }
+  #crosshair { position: fixed; left: 50%; top: 47.5%; width: 34px; height: 34px; margin: -17px 0 0 -17px; border: 3px solid #fff; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
+  #crosshair::after { content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; background: #ff4d6d; border-radius: 50%; }
   /* rounds + features */
   #chips { position: absolute; top: calc(max(10px, env(safe-area-inset-top)) + 52px); left: 10px; background: rgba(0,0,0,.45); border-radius: 10px; padding: 4px 10px; font-size: 13px; }
   #settingsBtn { padding: 6px 10px; font-size: 15px; background: #444a88; border-radius: 8px; }
@@ -95,6 +98,8 @@
 </head>
 <body>
 <div id="videos"></div>
+<canvas id="paintView"></canvas>
+<div id="crosshair" class="hidden"></div>
 
 <div id="lobby">
   <div class="card">
@@ -119,7 +124,7 @@
   <div id="loudMeter" class="hidden"><div></div></div>
   <div id="scores"></div>
   <div id="selfwrap"><video id="selfview" muted playsinline autoplay></video></div>
-  <div class="keys">W/S move · A/D turn · Space jump · F zap · M mute · gamepad works too</div>
+  <div class="keys">W/S move · A/D turn · Space jump · F zap · mouse aims paint · M mute · gamepad works too</div>
 </div>
 
 <div id="touch" class="hidden">

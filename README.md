@@ -29,6 +29,7 @@ The host (👑) picks what's on for each round in **Round settings** (⚙ button
 | 😂 Try not to laugh | Smile and the nearest player gets a point. |
 | 🗿 Freeze! | Every 15–30 s "FREEZE!" is called – move, or let your face move, and lose a point. |
 | 📣 Shout power | The louder you shout as you zap, the further and bigger the zap. |
+| 🎨 Paintball | Replaces the zap. Aim with the mouse (click to fire) or tap where you want to shoot on a phone. Paint lands on the TV screen *and* smears the victim's own view; cover 50% of a screen to paint them out (scores like a knockout). |
 
 ## How it works
 - **Three.js** renders the 3D arena. Each player's webcam stream becomes a `VideoTexture` on their TV screen (CRT shader with scanlines and static).
