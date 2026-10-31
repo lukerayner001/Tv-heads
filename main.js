@@ -941,7 +941,7 @@ const FEATURES = [
   ['laugh', '😂 Try not to laugh', 'Smile and the nearest player gets a point.'],
   ['freeze', '🗿 Freeze!', 'When FREEZE! is called, move – or your face moves – and lose a point.'],
   ['shout', '📣 Shout power', 'The louder you shout as you zap, the further it goes.'],
-  ['gun', '🔫 Blaster', 'Replaces the zap. Hold to fire fast. Hits crack their screen – and their view. 60% cracked = smashed.'],
+  ['gun', '🔫 Blaster', 'Replaces the zap. Hold to fire fast. Hits crack their screen – and their view. Crack it enough and it’s smashed.'],
 ];
 const DEFAULT_CFG = { target: 10, damage: true, hide: true, zapcam: true, billboards: true, mouth: false, laugh: false, freeze: false, shout: false, gun: false, mode: 'battle' };
 const MAX_HP = 3;
@@ -1169,7 +1169,7 @@ function respawn() {
   me.pos.set((Math.random() - 0.5) * 40, 0, (Math.random() - 0.5) * 40);
   collide(me.pos);
   me.hp = MAX_HP;
-  if (mePaint && mePaint.coverage > 0) { clearPaint(mePaint); redrawPaintView(); broadcast({ t: 'clean' }); }
+  if (mePaint && mePaint.hits > 0) { clearPaint(mePaint); redrawPaintView(); broadcast({ t: 'clean' }); }
 }
 
 // ----- freeze! -----
@@ -1341,14 +1341,44 @@ function makePaintLayer() {
   const c = document.createElement('canvas');
   c.width = PAINT_W; c.height = PAINT_H;
   const tex = new THREE.CanvasTexture(c);
-  return { c, g: c.getContext('2d', { willReadFrequently: true }), tex, coverage: 0 };
+  return { c, g: c.getContext('2d', { willReadFrequently: true }), tex, coverage: 0, cracks: [], chips: [], hits: 0 };
 }
 function clearPaint(layer) {
   if (!layer) return;
   layer.g.clearRect(0, 0, PAINT_W, PAINT_H);
   layer.tex.needsUpdate = true;
-  layer.coverage = 0;
+  layer.coverage = 0; layer.cracks.length = 0; layer.chips.length = 0; layer.hits = 0;
 }
+const MAX_CRACKS = 30, SMASH_HITS = 30;
+// A hit on top of an existing crack only adds a small frosted chip – cheap to draw, and it still counts.
+function addCrack(layer, u, v, size, seed) {
+  layer.hits++;
+  const near = layer.cracks.some((c) => Math.hypot(c.u - u, (c.v - v) * 0.75) < 0.08);
+  const item = { u, v, s: size, seed, chip: near || layer.cracks.length >= MAX_CRACKS };
+  (item.chip ? layer.chips : layer.cracks).push(item);
+  if (layer.chips.length > 200) layer.chips.shift();
+  drawItem(layer.g, PAINT_W, PAINT_H, item, 1, false);
+  layer.tex.needsUpdate = true;
+  return item;
+}
+function drawItem(g, W, H, item, lw, mirror) {
+  const u = mirror ? 1 - item.u : item.u;
+  if (item.chip) drawChip(g, W, H, u, item.v, item.s, item.seed, lw);
+  else drawCrackOn(g, W, H, u, item.v, item.s, item.seed, lw);
+}
+function drawChip(g, W, H, u, v, size, seed, lw) {
+  const r = seeded(seed), x = u * W, y = (1 - v) * H, R = size * W * 0.22;
+  const ox = x + (r() - 0.5) * R, oy = y + (r() - 0.5) * R;
+  const fr = g.createRadialGradient(ox, oy, 0, ox, oy, R);
+  fr.addColorStop(0, 'rgba(255,255,255,0.55)'); fr.addColorStop(1, 'rgba(225,238,255,0)');
+  g.fillStyle = fr; g.beginPath(); g.arc(ox, oy, R, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 1.2 * lw;
+  for (let i = 0; i < 3; i++) {
+    const a = r() * Math.PI * 2, l = R * (0.6 + r());
+    g.beginPath(); g.moveTo(ox, oy); g.lineTo(ox + Math.cos(a) * l, oy + Math.sin(a) * l); g.stroke();
+  }
+}
+const screenDamage = (layer) => Math.min(1, Math.max(layer.coverage / PAINT_OUT, layer.hits / SMASH_HITS));
 // A bullet crack at u,v (0..1 across the TV, v=0 at the bottom). Same seed = same crack on every device.
 function drawCrack(layer, u, v, size, seed) {
   drawCrackOn(layer.g, PAINT_W, PAINT_H, u, v, size, seed, 1);
@@ -1406,16 +1436,25 @@ function measureCoverage(layer) {
 }
 
 let mePaint = null;
-const myCracks = [];
+const viewQueue = [];
+let lastCov = 0;
 // my own view gets the same cracks, mirrored (I'm looking out through the glass)
 const paintView = $('paintView');
 const pvCtx = paintView.getContext('2d');
 function redrawPaintView() {
   paintView.width = innerWidth; paintView.height = innerHeight;
   pvCtx.clearRect(0, 0, paintView.width, paintView.height);
-  if (!mePaint?.coverage || !cfg.gun) { myCracks.length = 0; return; }
+  viewQueue.length = 0;
+  if (!mePaint || !cfg.gun) return;
   const lw = Math.max(1, paintView.width / 700);
-  for (const c of myCracks) drawCrackOn(pvCtx, paintView.width, paintView.height, 1 - c.u, c.v, c.s, c.seed, lw);
+  for (const it of mePaint.cracks) drawItem(pvCtx, paintView.width, paintView.height, it, lw, true);
+  for (const it of mePaint.chips) drawItem(pvCtx, paintView.width, paintView.height, it, lw, true);
+}
+function flushView() {                     // once per frame, however many hits arrived
+  if (!viewQueue.length) return;
+  const lw = Math.max(1, paintView.width / 700);
+  for (const it of viewQueue) drawItem(pvCtx, paintView.width, paintView.height, it, lw, true);
+  viewQueue.length = 0;
 }
 addEventListener('resize', redrawPaintView);
 
@@ -1423,14 +1462,11 @@ function applyPaint(m, fromId) {
   if (m.id === peer?.id) {
     const now = performance.now();
     if (!mePaint || now < me.koUntil) return;
-    drawCrack(mePaint, m.u, m.v, m.s, m.seed);
-    myCracks.push({ u: m.u, v: m.v, s: m.s, seed: m.seed });
-    measureCoverage(mePaint);
-    redrawPaintView();
+    viewQueue.push(addCrack(mePaint, m.u, m.v, m.s, m.seed));
     me.shakeUntil = now + 140;
     sfx('crack');
-    const cov = measureCoverage(mePaint);
-    if (cov >= PAINT_OUT && playing() && m.rd === roundId) {
+    if (now - lastCov > 150) { lastCov = now; measureCoverage(mePaint); }
+    if (screenDamage(mePaint) >= 1 && playing() && m.rd === roundId) {
       me.koUntil = now + 3000; me.stunUntil = me.koUntil;
       const by = remotes.get(fromId);
       const c = conns.get(fromId);
@@ -1441,7 +1477,7 @@ function applyPaint(m, fromId) {
     }
   } else {
     const target = remotes.get(m.id);
-    if (target && target.paint) drawCrack(target.paint, m.u, m.v, m.s, m.seed);
+    if (target && target.paint) addCrack(target.paint, m.u, m.v, m.s, m.seed);
   }
 }
 
@@ -1908,7 +1944,7 @@ function frame(now) {
     setOpacity(meParts, me.hidden ? 0.3 : adsT > 0.5 ? 0.45 : 1);
     $('selfwrap').classList.toggle('ghost', me.hidden);
     $('hearts').textContent = !roundId ? '' : cfg.gun
-      ? (ko ? '💥 Screen smashed!' : `🔫 Screen ${Math.round((mePaint?.coverage || 0) * 100)}% cracked / ${PAINT_OUT * 100}%`)
+      ? (ko ? '💥 Screen smashed!' : `🔫 Screen ${Math.round(screenDamage(mePaint || { coverage: 0, hits: 0 }) * 100)}% damaged`)
       : cfg.damage ? (ko ? '💥 KO' : '❤️'.repeat(Math.max(0, me.hp))) : '';
     $('selfwrap').classList.toggle('stunned', stunned);
 
@@ -1983,6 +2019,7 @@ function frame(now) {
 
   updateBillboards(time);
   updateBalls(dt);
+  flushView();
   checkWin();
 
   for (let i = beams.length - 1; i >= 0; i--) {
