@@ -22,7 +22,7 @@ A zap fills the other player's screen with static and stuns them.
 **Proximity voice chat:** you hear other players louder the closer they are (silent beyond ~20 m), panned left/right by where they stand. Headphones avoid echo. A player's name tag glows green while they talk and shows 🔇 when muted.
 
 ## The game
-A blaster battle. Hold the trigger to fire fast; every hit cracks the other player's TV screen – and their own view. Crack a screen 60% (or land 30 hits) to smash it and score. The leader's live face is shown on giant billboards around the arena. The host (👑) sets **first to 5/10/15/20** and starts the round; the blaster works during warm-up too, but nothing scores until the round starts.
+A blaster battle. Hold the trigger to fire fast; every hit cracks the other player's TV screen – and their own view. Crack a screen 60% (or land 30 hits) to smash it and score. The leader's live face is shown on giant billboards around the arena. The host (👑) sets **first to 5/10/15/20** and starts the first round. When someone wins there's a quick score screen, then everyone respawns at spread-out random spots and the next round starts automatically; the blaster works during warm-up too, but nothing scores until the round starts.
 
 ## How it works
 - **Three.js** renders the 3D arena. Each player's webcam stream becomes a `VideoTexture` on their TV screen (CRT shader with scanlines and static).

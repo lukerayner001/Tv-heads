@@ -607,6 +607,7 @@ let knocking = false;
 setInterval(() => {
   if (!started || !peer || !peer.open) return;
   const now = performance.now();
+  if (roundState === 'ended' && now - roundEndedAt > NEXT_ROUND_MS + 2500) autoNextRound();
   // heartbeat: players we haven't heard from in 8 s have gone (closed tab, lost signal)
   for (const [id, p] of [...remotes]) {
     if (now - p.lastMsg > 8000) {
@@ -1155,7 +1156,7 @@ $('nextRoundBtn').onclick = () => showSettings();
 $('keepPlayingBtn').onclick = () => $('results').classList.add('hidden');
 
 function startRound() {
-  const m = { t: 'round', rid: Date.now(), cfg: readSettings(), state: 'playing' };
+  const m = { t: 'round', rid: Date.now(), seed: (Math.random() * 1e9) | 0, cfg: readSettings(), state: 'playing' };
   applyRound(m);
   broadcast(m);
 }
@@ -1170,6 +1171,7 @@ function applyRound(m) {
   for (const p of remotes.values()) { p.score = 0; clearPaint(p.paint); }
   clearPaint(mePaint); clearFloorSplats(); setTimeout(redrawPaintView);
   roundState = m.state === 'ended' ? 'ended' : 'playing';
+  if (roundState === 'playing' && meParts) roundSpawn(m.seed || m.rid);
   nextFreezeAt = performance.now() + 12000 + Math.random() * 10000;
   hideOverlays();
   if (roundState === 'playing') toast(`Round on! First to ${cfg.target}`);
@@ -1203,9 +1205,27 @@ function endRound(w) {
     ? zapPhotos.map((p) => `<figure><img src="${p.src}"><figcaption>${escapeHtml(p.caption)}</figcaption></figure>`).join('')
     : (cfg.zapcam ? '<p class="muted">No zap-cam photos this round.</p>' : '');
   $('galleryTitle').classList.toggle('hidden', !cfg.zapcam);
-  $('nextRoundBtn').classList.toggle('hidden', !holdingDoor);
-  $('hostWait').classList.toggle('hidden', holdingDoor);
+  $('nextRoundBtn').classList.add('hidden');
+  $('hostWait').classList.add('hidden');
+  roundEndedAt = performance.now();
   $('results').classList.remove('hidden');
+  tickNextRound();
+}
+const NEXT_ROUND_MS = 6000;
+let roundEndedAt = 0;
+function tickNextRound() {
+  if (roundState !== 'ended') return;
+  const left = Math.ceil((roundEndedAt + NEXT_ROUND_MS - performance.now()) / 1000);
+  $('nextIn').textContent = left > 0 ? `Next round in ${left}…` : 'Starting…';
+  if (left <= 0) autoNextRound();
+  else setTimeout(tickNextRound, 250);
+}
+function autoNextRound() {
+  // the host starts it (unless they've got the settings open); if the host left, the new host picks it up
+  if (roundState !== 'ended' || !holdingDoor || !$('settings').classList.contains('hidden')) return;
+  const m = { t: 'round', rid: Date.now(), seed: (Math.random() * 1e9) | 0, cfg: { target: cfg.target }, state: 'playing' };
+  applyRound(m);
+  broadcast(m);
 }
 
 // ----- camera sampler: brightness (hide) + motion (freeze) -----
@@ -1333,9 +1353,46 @@ function updateBillboards(time) {
 }
 
 // ----- knockouts -----
-function respawn() {
-  me.pos.set((Math.random() - 0.5) * 40, 0, (Math.random() - 0.5) * 40);
+const spotClear = (x, z, m = 1.6) => Math.abs(x) < ARENA - 3 && Math.abs(z) < ARENA - 3 &&
+  !obstacles.some((o) => x > o.minX - m && x < o.maxX + m && z > o.minZ - m && z < o.maxZ + m);
+// mid-round respawn: somewhere clear, as far from everyone as possible
+function pickSpawn() {
+  let best = null, bestD = -1;
+  for (let i = 0; i < 60; i++) {
+    const x = (Math.random() * 2 - 1) * (ARENA - 3), z = (Math.random() * 2 - 1) * (ARENA - 3);
+    if (!spotClear(x, z)) continue;
+    let d = 30;
+    for (const p of remotes.values()) d = Math.min(d, Math.hypot(p.target.x - x, p.target.z - z));
+    if (d > bestD) { bestD = d; best = new THREE.Vector3(x, 0, z); }
+  }
+  return best || new THREE.Vector3(0, 0, 6);
+}
+// new round: the host's seed gives every device the same well-spread set of spots; each player takes their own
+function spawnSlots(seed, n) {
+  const r = seeded(seed), cands = [];
+  for (let x = -21; x <= 21; x += 3) for (let z = -21; z <= 21; z += 3) if (spotClear(x, z)) cands.push([x, z]);
+  const out = [cands[Math.floor(r() * cands.length)]];
+  while (out.length < n) {
+    let best = null, bd = -1;
+    for (const c of cands) {
+      const d = Math.min(...out.map((o) => Math.hypot(o[0] - c[0], o[1] - c[1]))) + r() * 2;
+      if (d > bd) { bd = d; best = c; }
+    }
+    out.push(best);
+  }
+  return out;
+}
+function roundSpawn(seed) {
+  const ids = [peer?.id, ...remotes.keys()].sort();
+  const slots = spawnSlots(seed, Math.max(ids.length, 2));
+  const [x, z] = slots[Math.max(0, ids.indexOf(peer?.id)) % slots.length];
+  respawn(new THREE.Vector3(x, 0, z));
+}
+function respawn(at) {
+  me.pos.copy(at || pickSpawn());
   collide(me.pos);
+  me.rot = Math.atan2(-me.pos.x, -me.pos.z);                     // face the middle of the roof
+  camYaw = me.rot; camPitch = -0.1;
   me.hp = MAX_HP;
   if (mePaint && mePaint.hits > 0) { clearPaint(mePaint); redrawPaintView(); broadcast({ t: 'clean' }); }
 }
@@ -2015,4 +2072,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { spotClear, gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
