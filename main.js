@@ -16,7 +16,7 @@ function setStatus(msg, bad) {
 
 // ---------- renderer / scene ----------
 const renderer = new THREE.WebGLRenderer({ antialias: !isTouch });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));   // lighter on phones = smoother
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -33,7 +33,7 @@ scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x404060, 1.2));
 const sun = new THREE.DirectionalLight(0xffffff, 2.0);
 sun.position.set(12, 25, 8);
 sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.mapSize.set(isTouch ? 512 : 1024, isTouch ? 512 : 1024);
 Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 70 });
 scene.add(sun);
 
@@ -771,36 +771,60 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 
-const touch = { x: 0, y: 0, zap: false, jump: false };
+let touchLookDX = 0, touchLookDY = 0;
+const touch = { x: 0, y: 0, zap: false, jump: false, aim: false };
 {
-  const pad = $('stick'), knob = $('knob');
+  // floating joystick: put your thumb down anywhere on the left side
+  const zone = $('moveZone'), stick = $('stick'), knob = $('knob');
   let id = null, cx = 0, cy = 0;
-  const R = 50;
-  pad.addEventListener('pointerdown', (e) => {
-    id = e.pointerId; pad.setPointerCapture(id);
-    const r = pad.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2;
-    move(e);
+  const R = 55;
+  zone.addEventListener('pointerdown', (e) => {
+    if (id !== null) return;
+    id = e.pointerId; zone.setPointerCapture(id);
+    cx = e.clientX; cy = e.clientY;
+    stick.style.left = cx + 'px'; stick.style.top = cy + 'px';
+    stick.classList.add('active');
+    knob.style.transform = '';
   });
-  const move = (e) => {
+  zone.addEventListener('pointermove', (e) => {
     if (e.pointerId !== id) return;
     let dx = e.clientX - cx, dy = e.clientY - cy;
     const d = Math.hypot(dx, dy); if (d > R) { dx *= R / d; dy *= R / d; }
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
-    touch.x = dx / R; touch.y = dy / R;
+    const dead = (v) => (Math.abs(v) < 0.12 ? 0 : v);
+    touch.x = dead(dx / R); touch.y = dead(dy / R);
+  });
+  const end = (e) => {
+    if (e.pointerId !== id) return;
+    id = null; touch.x = touch.y = 0; knob.style.transform = ''; stick.classList.remove('active');
   };
-  pad.addEventListener('pointermove', move);
-  const end = (e) => { if (e.pointerId !== id) return; id = null; touch.x = touch.y = 0; knob.style.transform = ''; };
-  pad.addEventListener('pointerup', end); pad.addEventListener('pointercancel', end);
+  zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end);
+
+  // look: drag on the right side (sensitivity scales with screen size so every phone feels the same)
+  const look = $('lookZone');
+  let lid = null, lx = 0, ly = 0;
+  look.addEventListener('pointerdown', (e) => { if (lid !== null) return; lid = e.pointerId; look.setPointerCapture(lid); lx = e.clientX; ly = e.clientY; });
+  look.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== lid) return;
+    touchLookDX += (e.clientX - lx) / Math.min(innerWidth, innerHeight);
+    touchLookDY += (e.clientY - ly) / Math.min(innerWidth, innerHeight);
+    lx = e.clientX; ly = e.clientY;
+  });
+  const lend = (e) => { if (e.pointerId === lid) lid = null; };
+  look.addEventListener('pointerup', lend); look.addEventListener('pointercancel', lend);
+
   for (const [btn, k] of [[$('zapBtn'), 'zap'], [$('jumpBtn'), 'jump']]) {
-    btn.addEventListener('pointerdown', (e) => { e.preventDefault(); touch[k] = true; btn.classList.add('down'); });
+    btn.addEventListener('pointerdown', (e) => { e.preventDefault(); btn.setPointerCapture(e.pointerId); touch[k] = true; btn.classList.add('down'); });
     const up = () => { touch[k] = false; btn.classList.remove('down'); };
-    btn.addEventListener('pointerup', up); btn.addEventListener('pointercancel', up); btn.addEventListener('pointerleave', up);
+    btn.addEventListener('pointerup', up); btn.addEventListener('pointercancel', up);
   }
+  // AIM is a toggle on phones – much easier than holding it while you shoot
+  $('aimBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); touch.aim = !touch.aim; $('aimBtn').classList.toggle('on', touch.aim); });
 }
 
 // ---------- Arc Raiders-style look: pointer lock, over-the-shoulder camera, fixed crosshair ----------
 let camYaw = me.rot, camPitch = -0.1;
-let mouseDX = 0, mouseDY = 0, mouseFire = false, mouseAim = false, touchLookDX = 0, touchLookDY = 0, tapFire = false;
+let mouseDX = 0, mouseDY = 0, mouseFire = false, mouseAim = false;
 const locked = () => document.pointerLockElement === renderer.domElement;
 const overlayOpen = () => ['settings', 'results', 'lobby'].some((id) => !$(id).classList.contains('hidden'));
 renderer.domElement.addEventListener('mousedown', (e) => {
@@ -814,26 +838,6 @@ addEventListener('mousemove', (e) => { if (locked()) { mouseDX += e.movementX; m
 renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('pointerlockchange', () => { if (!locked()) { mouseFire = false; mouseAim = false; } });
 function releaseMouse() { if (locked()) document.exitPointerLock(); }
-
-// phones: drag anywhere on the view to look around, quick tap to fire
-{
-  let id = null, lx = 0, ly = 0, sx = 0, sy = 0, t0 = 0;
-  const el = renderer.domElement;
-  el.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse' || id !== null || !started) return;
-    id = e.pointerId; lx = sx = e.clientX; ly = sy = e.clientY; t0 = performance.now();
-  });
-  el.addEventListener('pointermove', (e) => {
-    if (e.pointerId !== id) return;
-    touchLookDX += e.clientX - lx; touchLookDY += e.clientY - ly; lx = e.clientX; ly = e.clientY;
-  });
-  const end = (e) => {
-    if (e.pointerId !== id) return;
-    if (Math.hypot(e.clientX - sx, e.clientY - sy) < 12 && performance.now() - t0 < 300) tapFire = true;
-    id = null;
-  };
-  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
-}
 
 function readInput() {
   let fwd = 0, strafe = 0, lookX = 0, lookY = 0, zap = false, jump = false, aim = false, sprint = false;
@@ -859,8 +863,8 @@ function readInput() {
     if (gp.buttons[10]?.pressed || gp.buttons[1]?.pressed) sprint = true;
   }
   fwd += -touch.y; strafe += touch.x;
-  zap ||= touch.zap || mouseFire || tapFire; tapFire = false;
-  jump ||= touch.jump; aim ||= mouseAim;
+  zap ||= touch.zap || mouseFire;
+  jump ||= touch.jump; aim ||= mouseAim || touch.aim;
   return { fwd: Math.max(-1, Math.min(1, fwd)), strafe: Math.max(-1, Math.min(1, strafe)), lookX, lookY, zap, jump, aim, sprint };
 }
 
@@ -959,6 +963,7 @@ function applyRound(m) {
   roundId = m.rid;
   cfg = { ...DEFAULT_CFG, ...m.cfg };
   me.score = 0; me.hp = MAX_HP; me.koUntil = 0; me.stunUntil = 0;
+  touch.aim = false; $('aimBtn').classList.remove('on');
   zapPhotos.length = 0;
   for (const p of remotes.values()) { p.score = 0; clearPaint(p.paint); }
   clearPaint(mePaint); clearFloorSplats(); setTimeout(redrawPaintView);
@@ -976,7 +981,7 @@ function updateFeatureChips() {
   const on = FEATURES.filter(([k]) => cfg[k]).map(([, n]) => n.split(' ')[0]).join(' ');
   $('chips').textContent = roundId ? `First to ${cfg.target} ${on}` : 'Warm-up';
   $('settingsBtn').classList.toggle('hidden', !holdingDoor);
-  $('zapBtn').textContent = cfg.mouth && face ? '😮' : cfg.paint && roundId ? '🎨' : 'ZAP';
+  $('zapBtn').textContent = cfg.mouth && face ? '😮' : cfg.paint && roundId ? '🎨' : '⚡';
 }
 
 function checkWin() {
@@ -1537,8 +1542,9 @@ function frame(now) {
     const stunned = now < me.stunUntil;
     // look
     const sens = inp.aim ? 0.0014 : 0.0024;
-    camYaw -= mouseDX * sens + touchLookDX * 0.006 + inp.lookX * 2.4 * dt;
-    camPitch -= mouseDY * sens + touchLookDY * 0.005 + inp.lookY * 1.6 * dt;
+    const tSens = inp.aim ? 1.6 : 2.8;                  // radians per screen-width of swipe
+    camYaw -= mouseDX * sens + touchLookDX * tSens + inp.lookX * 2.4 * dt;
+    camPitch -= mouseDY * sens + touchLookDY * tSens * 0.7 + inp.lookY * 1.6 * dt;
     camPitch = Math.max(-0.75, Math.min(0.85, camPitch));
     mouseDX = mouseDY = touchLookDX = touchLookDY = 0;
     // move relative to the camera
@@ -1598,7 +1604,11 @@ function frame(now) {
     camera.position.lerp(camPos, 1 - Math.exp(-dt * 18));
     lookAt.set(camera.position.x + dx * 10, camera.position.y + dy * 10, camera.position.z + dz * 10);
     camera.lookAt(lookAt);
-    const fov = 62 - 20 * adsT + (sprinting ? 6 : 0);
+    let fov = 62 - 20 * adsT + (sprinting ? 6 : 0);
+    if (camera.aspect < 1.2) {                          // portrait phones: keep a decent sideways view
+      const h = THREE.MathUtils.degToRad(fov * 1.25);
+      fov = Math.min(100, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(h / 2) / camera.aspect)));
+    }
     if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 10); camera.updateProjectionMatrix(); }
     crosshair.classList.toggle('ads', inp.aim);
     $('lockHint').classList.toggle('hidden', isTouch || locked() || overlayOpen());

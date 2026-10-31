@@ -9,10 +9,10 @@ Third-person, over-the-shoulder shooter controls (Arc Raiders style).
 
 | | Keyboard + mouse | Gamepad | Phone |
 |---|---|---|---|
-| Look / aim | Mouse (click the game to lock the cursor, Esc to free it) | Right stick | Drag on the screen |
-| Move / strafe | WASD | Left stick | Joystick |
-| Shoot | Left click (or F) | RT / RB | Quick tap or 🎨/ZAP button |
-| Aim down sights | Right click (or Q) | LT / LB | – |
+| Look / aim | Mouse (click the game to lock the cursor, Esc to free it) | Right stick | Drag on the right side |
+| Move / strafe | WASD | Left stick | Thumb down anywhere on the left side (floating stick) |
+| Shoot | Left click (or F) | RT / RB | Big red button |
+| Aim down sights | Right click (or Q) | LT / LB | AIM button (toggle) |
 | Sprint | Shift | B / L3 | – |
 | Jump | Space | A | JUMP |
 | Mute mic | M | – | 🎤 button |

@@ -50,12 +50,17 @@
 
   #touch { position: fixed; inset: 0; pointer-events: none; }
   #touch .keys { display: none; }
-  #stick { position: absolute; left: 24px; bottom: calc(max(24px, env(safe-area-inset-bottom)) + 110px); width: 130px; height: 130px; border-radius: 50%; background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.3); pointer-events: auto; touch-action: none; }
-  #knob { position: absolute; left: 40px; top: 40px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.6); }
-  .tbtn { position: absolute; width: 84px; height: 84px; border-radius: 50%; pointer-events: auto; touch-action: none; font-size: 15px; opacity: .85; }
-  .tbtn.down { transform: scale(.92); opacity: 1; }
-  #zapBtn { right: 24px; bottom: calc(max(24px, env(safe-area-inset-bottom)) + 40px); background: #e9c46a; color: #222; width: 96px; height: 96px; }
-  #jumpBtn { right: 130px; bottom: calc(max(24px, env(safe-area-inset-bottom)) + 10px); background: #457b9d; }
+  #moveZone { position: absolute; left: 0; top: 70px; bottom: 0; width: 45%; pointer-events: auto; touch-action: none; }
+  #lookZone { position: absolute; right: 0; top: 70px; bottom: 0; width: 55%; pointer-events: auto; touch-action: none; }
+  #stick { position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: rgba(255,255,255,.10); border: 2px solid rgba(255,255,255,.35); pointer-events: none; opacity: .35; left: 90px; top: calc(100% - 150px); transition: opacity .15s; }
+  #stick.active { opacity: 1; transition: none; }
+  #knob { position: absolute; left: 35px; top: 35px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.7); }
+  .tbtn { position: absolute; border-radius: 50%; pointer-events: auto; touch-action: none; font-size: 14px; font-weight: 800; opacity: .85; padding: 0; }
+  .tbtn.down { transform: scale(.9); opacity: 1; }
+  #zapBtn { right: 22px; bottom: calc(max(22px, env(safe-area-inset-bottom)) + 70px); width: 92px; height: 92px; background: #e63946; color: #fff; font-size: 26px; }
+  #aimBtn { right: 124px; bottom: calc(max(22px, env(safe-area-inset-bottom)) + 120px); width: 64px; height: 64px; background: #2a9d8f; }
+  #aimBtn.on { background: #ffb703; color: #222; }
+  #jumpBtn { right: 30px; bottom: max(14px, env(safe-area-inset-bottom)); width: 60px; height: 60px; background: #457b9d; font-size: 12px; }
   @media (pointer: coarse) { .keys { display: none; } #selfwrap { width: 96px; } }
   #paintView { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .93; }
   #crosshair { position: fixed; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; transition: transform .12s; border: 2px solid rgba(255,255,255,.9); border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
@@ -96,6 +101,15 @@
   #loudMeter div { height: 100%; width: 0; background: linear-gradient(90deg, #ffd166, #ef476f); }
   @media (pointer: coarse) { #loudMeter { left: 116px; } }
 
+  @media (max-width: 640px) {
+    #room { padding: 5px 8px; font-size: 12px; gap: 6px; }
+    #roomcode { font-size: 15px; letter-spacing: 2px; }
+    #room button { padding: 5px 7px; font-size: 12px; }
+    #scores { top: calc(max(10px, env(safe-area-inset-top)) + 46px); font-size: 12px; min-width: 0; padding: 5px 9px; }
+    #chips { top: calc(max(10px, env(safe-area-inset-top)) + 46px); font-size: 12px; }
+    #waiting { top: 120px; font-size: 13px; }
+    #freeze { font-size: 46px; }
+  }
 </style>
 </head>
 <body>
@@ -131,9 +145,12 @@
 </div>
 
 <div id="touch" class="hidden">
+  <div id="moveZone"></div>
+  <div id="lookZone"></div>
   <div id="stick"><div id="knob"></div></div>
+  <button class="tbtn" id="aimBtn">AIM</button>
   <button class="tbtn" id="jumpBtn">JUMP</button>
-  <button class="tbtn" id="zapBtn">ZAP</button>
+  <button class="tbtn" id="zapBtn">🔫</button>
 </div>
 
 <div id="toast"></div>
