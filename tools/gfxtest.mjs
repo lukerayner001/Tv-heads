@@ -1,0 +1,24 @@
+import { createRequire } from 'module'; const { chromium } = createRequire(import.meta.url)(process.env.PWPATH);
+const b = await chromium.launch({ args: ['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--use-gl=swiftshader','--enable-unsafe-swiftshader'] });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let ok=0, bad=0; const check=(n,c,i='')=>{ c?ok++:bad++; console.log((c?'PASS ':'FAIL ')+n, i); };
+const ctx = await b.newContext({ viewport: { width: 390, height: 780 }, isMobile: true, hasTouch: true });
+const P = await ctx.newPage(); const errs=[]; P.on('pageerror', e => errs.push(e.message));
+await P.goto('http://127.0.0.1:8080/tv-heads.html?peerhost=127.0.0.1&peerport=9000');
+check('normal device: not in simple mode', !(await P.evaluate(() => window.__tv.safeGfx)), await P.evaluate(() => window.__tv.gpuName));
+await P.click('#hostBtn'); await P.waitForFunction(() => document.getElementById('roomcode').textContent.length===4);
+await sleep(7000);
+check('normal device: no false alarm', !(await P.evaluate(() => window.__tv.safeGfx)) && (await P.evaluate(() => document.getElementById('gfxMsg').classList.contains('hidden'))));
+// broken driver simulation
+await P.goto('http://127.0.0.1:8080/tv-heads.html?whitetest&peerhost=127.0.0.1&peerport=9000');
+await P.click('#hostBtn'); await P.waitForFunction(() => document.getElementById('roomcode').textContent.length===4);
+const code = await P.textContent('#roomcode');
+await P.waitForNavigation({ timeout: 20000 }).catch(() => {});
+await sleep(1500);
+check('white screen detected -> reloads in simple graphics', await P.evaluate(() => window.__tv.safeGfx));
+check('simple graphics tick box shown on', await P.evaluate(() => document.getElementById('safeGfx').checked));
+check('room code remembered for quick rejoin', (await P.inputValue('#code')) === code, await P.inputValue('#code'));
+await P.click('#hostBtn'); await P.waitForFunction(() => document.getElementById('roomcode').textContent.length===4); await P.click('#closeSettingsBtn'); await sleep(1500);
+await P.screenshot({ path: 'tools/safe.png' });
+console.log(`${ok} passed, ${bad} failed`, errs);
+await b.close();

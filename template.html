@@ -67,6 +67,13 @@
   #crosshair::after { content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; background: #ff4d6d; border-radius: 50%; }
   #crosshair.ads { transform: scale(.6); }
   #lockHint { position: fixed; left: 50%; top: 58%; transform: translateX(-50%); background: rgba(0,0,0,.6); padding: 8px 16px; border-radius: 20px; font-weight: 700; pointer-events: none; z-index: 3; }
+  .gfxopt { display: flex; gap: 8px; align-items: center; margin-top: 12px; font-size: 13px; color: #cfd4ff; }
+  .gfxopt input { width: 18px; height: 18px; }
+  .gfxopt small { color: #8a91d0; }
+  .gpu { font-size: 10px; color: #6c73b0; text-align: center; margin-top: 6px; word-break: break-all; }
+  #gfxMsg { position: fixed; left: 50%; top: 40%; transform: translateX(-50%); background: #262b55; border: 3px solid #e63946; border-radius: 14px; padding: 14px 18px; text-align: center; z-index: 20; max-width: 90%; }
+  #gfxMsg small { color: #a9b0ef; }
+  #gfxMsg button { margin-top: 10px; background: #e63946; padding: 8px 16px; }
   /* rounds + features */
   #chips { position: absolute; top: calc(max(10px, env(safe-area-inset-top)) + 52px); left: 10px; background: rgba(0,0,0,.45); border-radius: 10px; padding: 4px 10px; font-size: 13px; }
   #settingsBtn { padding: 6px 10px; font-size: 15px; background: #444a88; border-radius: 8px; }
@@ -131,6 +138,8 @@
     <input id="code" maxlength="4" placeholder="ABCD" autocomplete="off" autocapitalize="characters">
     <button class="big join" id="joinBtn">Join game</button>
     <div id="status"></div>
+    <label class="gfxopt"><input type="checkbox" id="safeGfx"> Simple graphics <small>(try this if the game shows a blank or white screen)</small></label>
+    <div class="gpu">Graphics: <span id="gpuName"></span></div>
     <div class="help">Allow camera and microphone when asked. You hear people louder the closer they are — headphones stop echo. Video and voice go straight between players; nothing is recorded.</div>
   </div>
 </div>
@@ -155,6 +164,7 @@
 </div>
 
 <div id="toast"></div>
+<div id="gfxMsg" class="hidden"></div>
 <img id="snapPop" alt="">
 <div id="freeze" class="hidden">FREEZE!</div>
 <div id="waiting" class="hidden">⏳ Waiting for the host to start the round…<br><small>Run around and practise!</small></div>

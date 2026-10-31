@@ -15,16 +15,31 @@ function setStatus(msg, bad) {
 }
 
 // ---------- renderer / scene ----------
-const renderer = new THREE.WebGLRenderer({ antialias: !isTouch });
-renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));   // lighter on phones = smoother
+// Which graphics chip? Some new phone GPUs (e.g. PowerVR in the Pixel 10) have driver bugs with shadows.
+const gpuName = (() => {
+  try {
+    const c = document.createElement('canvas');
+    const gl = c.getContext('webgl2') || c.getContext('webgl');
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const n = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return String(n);
+  } catch { return 'unknown'; }
+})();
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+const safeGfx = qs.has('safe') || lsGet('tvhead-safe') === '1' || (lsGet('tvhead-safe') !== '0' && /PowerVR|Imagination/i.test(gpuName));
+const renderer = new THREE.WebGLRenderer({ antialias: !isTouch && !safeGfx, precision: safeGfx ? 'mediump' : 'highp', powerPreference: safeGfx ? 'default' : 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, safeGfx ? 1 : isTouch ? 1.5 : 2));   // lighter on phones = smoother
 renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = !safeGfx;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1b1f3b);
 scene.fog = new THREE.Fog(0x1b1f3b, 30, 70);
+if (qs.has('whitetest') && !safeGfx) { scene.background = new THREE.Color(0xffffff); scene.overrideMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff }); }   // test hook: fake a broken driver
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200);
 camera.position.set(0, 6, -10);
@@ -722,6 +737,7 @@ function tryJoin(attempt) {
 
 function startGame() {
   started = true;
+  try { sessionStorage.setItem('tvhead-room', roomCode); } catch {}
   $('lobby').classList.add('hidden');
   $('hud').classList.remove('hidden');
   $('roomcode').textContent = roomCode;
@@ -756,6 +772,10 @@ $('joinBtn').onclick = () => join();
 $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
 try { $('name').value = localStorage.getItem('tvhead-name') || ''; } catch {}
 if (/^#[A-Za-z]{4}$/.test(location.hash)) $('code').value = location.hash.slice(1).toUpperCase();
+else { try { const rc = sessionStorage.getItem('tvhead-room'); if (rc) $('code').value = rc; } catch {} }
+$('safeGfx').checked = safeGfx;
+$('safeGfx').onchange = () => { lsSet('tvhead-safe', $('safeGfx').checked ? '1' : '0'); location.reload(); };
+$('gpuName').textContent = gpuName;
 $('copyBtn').onclick = async () => {
   const link = location.href.split('#')[0] + '#' + roomCode;
   try { await navigator.clipboard.writeText(link); toast('Invite link copied'); }
@@ -1224,7 +1244,7 @@ async function ensureFace() {
     const vision = await import(/* @vite-ignore */ base + '/vision_bundle.mjs');
     const fileset = await vision.FilesetResolver.forVisionTasks(base + '/wasm');
     const opts = (delegate) => ({ baseOptions: { modelAssetPath: model, delegate }, runningMode: 'VIDEO', numFaces: 1, outputFaceBlendshapes: true });
-    try { face = await vision.FaceLandmarker.createFromOptions(fileset, opts('GPU')); }
+    try { face = await vision.FaceLandmarker.createFromOptions(fileset, opts(safeGfx ? 'CPU' : 'GPU')); }
     catch { face = await vision.FaceLandmarker.createFromOptions(fileset, opts('CPU')); }
     toast('😮 Face tracking ready');
   } catch (e) {
@@ -1772,6 +1792,39 @@ function pongMe(dt, now, time, inp) {
   $('lockHint').classList.add('hidden');
 }
 
+// ---------- graphics health check ----------
+// If the 3D view comes out solid white (a driver bug), switch to simple graphics and reload.
+let gfxNext = 3000, gfxWhite = 0;
+const px = new Uint8Array(4);
+function gfxCheck(now) {
+  if (now < gfxNext || now > 60000 || !started) return;
+  gfxNext = now + 1500;
+  const gl = renderer.getContext();
+  const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+  let white = 0;
+  for (const [fx, fy] of [[0.2, 0.8], [0.8, 0.8], [0.5, 0.95], [0.15, 0.3], [0.85, 0.3]]) {
+    gl.readPixels(Math.floor(w * fx), Math.floor(h * fy), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    if (px[0] > 245 && px[1] > 245 && px[2] > 245) white++;
+  }
+  gfxWhite = white >= 4 ? gfxWhite + 1 : 0;
+  if (gfxWhite >= 2) {
+    if (!safeGfx) { lsSet('tvhead-safe', '1'); toast('Switching to simple graphics…'); setTimeout(() => location.reload(), 800); }
+    else showGfxProblem('The 3D view isn’t drawing on this device.');
+    gfxNext = Infinity;
+  }
+}
+function showGfxProblem(msg) {
+  $('gfxMsg').innerHTML = `📺 ${msg}<br><small>Graphics chip: ${escapeHtml(gpuName)}</small><br><button id="gfxReload">Reload</button>`;
+  $('gfxMsg').classList.remove('hidden');
+  $('gfxReload').onclick = () => location.reload();
+}
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();                                   // lets the browser try to restore it
+  if (!safeGfx) lsSet('tvhead-safe', '1');
+  showGfxProblem('Graphics crashed. Trying to recover – or tap Reload (you’ll rejoin with the same code).');
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => { $('gfxMsg').classList.add('hidden'); toast('Graphics recovered'); });
+
 // ---------- animate ----------
 function animateBody(parts, walk, speed) {
   const a = Math.sin(walk) * 0.6 * speed;
@@ -1940,7 +1993,7 @@ function frame(now) {
     if (b.life <= 0) { scene.remove(b.m); if (!b.shared) b.m.geometry.dispose(); b.m.material.dispose(); beams.splice(i, 1); }
   }
 
-  if (!qs.has('norender')) renderer.render(scene, camera);
+  if (!qs.has('norender')) { renderer.render(scene, camera); gfxCheck(now); }
 }
 requestAnimationFrame(frame);
 
@@ -1951,4 +2004,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { get decals() { return decals.length; }, get pong() { return pong; }, pongBall: () => pongBall, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { gpuName, safeGfx, get decals() { return decals.length; }, get pong() { return pong; }, pongBall: () => pongBall, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
