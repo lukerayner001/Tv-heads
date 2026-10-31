@@ -798,25 +798,70 @@ const touch = { x: 0, y: 0, zap: false, jump: false };
   }
 }
 
+// ---------- Arc Raiders-style look: pointer lock, over-the-shoulder camera, fixed crosshair ----------
+let camYaw = me.rot, camPitch = -0.1;
+let mouseDX = 0, mouseDY = 0, mouseFire = false, mouseAim = false, touchLookDX = 0, touchLookDY = 0, tapFire = false;
+const locked = () => document.pointerLockElement === renderer.domElement;
+const overlayOpen = () => ['settings', 'results', 'lobby'].some((id) => !$(id).classList.contains('hidden'));
+renderer.domElement.addEventListener('mousedown', (e) => {
+  if (!started || overlayOpen()) return;
+  if (!locked()) { try { const r = renderer.domElement.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch {} return; }
+  if (e.button === 0) mouseFire = true;
+  if (e.button === 2) mouseAim = true;
+});
+addEventListener('mouseup', (e) => { if (e.button === 0) mouseFire = false; if (e.button === 2) mouseAim = false; });
+addEventListener('mousemove', (e) => { if (locked()) { mouseDX += e.movementX; mouseDY += e.movementY; } });
+renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+document.addEventListener('pointerlockchange', () => { if (!locked()) { mouseFire = false; mouseAim = false; } });
+function releaseMouse() { if (locked()) document.exitPointerLock(); }
+
+// phones: drag anywhere on the view to look around, quick tap to fire
+{
+  let id = null, lx = 0, ly = 0, sx = 0, sy = 0, t0 = 0;
+  const el = renderer.domElement;
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' || id !== null || !started) return;
+    id = e.pointerId; lx = sx = e.clientX; ly = sy = e.clientY; t0 = performance.now();
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== id) return;
+    touchLookDX += e.clientX - lx; touchLookDY += e.clientY - ly; lx = e.clientX; ly = e.clientY;
+  });
+  const end = (e) => {
+    if (e.pointerId !== id) return;
+    if (Math.hypot(e.clientX - sx, e.clientY - sy) < 12 && performance.now() - t0 < 300) tapFire = true;
+    id = null;
+  };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+}
+
 function readInput() {
-  let fwd = 0, turn = 0, zap = false, jump = false;
+  let fwd = 0, strafe = 0, lookX = 0, lookY = 0, zap = false, jump = false, aim = false, sprint = false;
   if (keys.has('KeyW') || keys.has('ArrowUp')) fwd += 1;
   if (keys.has('KeyS') || keys.has('ArrowDown')) fwd -= 1;
-  if (keys.has('KeyA') || keys.has('ArrowLeft')) turn += 1;
-  if (keys.has('KeyD') || keys.has('ArrowRight')) turn -= 1;
+  if (keys.has('KeyD')) strafe += 1;
+  if (keys.has('KeyA')) strafe -= 1;
+  if (keys.has('ArrowLeft')) lookX -= 1;              // keyboard-only players can still turn
+  if (keys.has('ArrowRight')) lookX += 1;
   if (keys.has('KeyF') || keys.has('Enter') || keys.has('KeyK')) zap = true;
   if (keys.has('Space')) jump = true;
+  if (keys.has('ShiftLeft') || keys.has('ShiftRight')) sprint = true;
+  if (keys.has('KeyQ')) aim = true;
   for (const gp of navigator.getGamepads ? navigator.getGamepads() : []) {
     if (!gp) continue;
     const dz = (v) => (Math.abs(v) < 0.18 ? 0 : v);
     fwd += -dz(gp.axes[1] || 0);
-    turn += -dz(gp.axes[0] || 0) - dz(gp.axes[2] || 0);
+    strafe += dz(gp.axes[0] || 0);
+    lookX += dz(gp.axes[2] || 0); lookY += dz(gp.axes[3] || 0);
     if (gp.buttons[0]?.pressed) jump = true;
-    if (gp.buttons[2]?.pressed || gp.buttons[1]?.pressed || gp.buttons[7]?.pressed || gp.buttons[5]?.pressed) zap = true;
+    if (gp.buttons[7]?.pressed || gp.buttons[5]?.pressed || gp.buttons[2]?.pressed) zap = true;
+    if (gp.buttons[6]?.pressed || gp.buttons[4]?.pressed) aim = true;
+    if (gp.buttons[10]?.pressed || gp.buttons[1]?.pressed) sprint = true;
   }
-  fwd += -touch.y; turn += -touch.x;
-  zap ||= touch.zap; jump ||= touch.jump;
-  return { fwd: Math.max(-1, Math.min(1, fwd)), turn: Math.max(-1, Math.min(1, turn)), zap, jump };
+  fwd += -touch.y; strafe += touch.x;
+  zap ||= touch.zap || mouseFire || tapFire; tapFire = false;
+  jump ||= touch.jump; aim ||= mouseAim;
+  return { fwd: Math.max(-1, Math.min(1, fwd)), strafe: Math.max(-1, Math.min(1, strafe)), lookX, lookY, zap, jump, aim, sprint };
 }
 
 // ---------- zap beams ----------
@@ -895,7 +940,7 @@ function readSettings() {
   try { localStorage.setItem('tvhead-cfg', JSON.stringify(c)); } catch {}
   return c;
 }
-function showSettings() { buildSettings(); hideOverlays(); $('settings').classList.remove('hidden'); }
+function showSettings() { releaseMouse(); buildSettings(); hideOverlays(); $('settings').classList.remove('hidden'); }
 function hideOverlays() { for (const id of ['settings', 'results', 'waiting']) $(id).classList.add('hidden'); }
 $('startRoundBtn').onclick = () => startRound();
 $('settingsBtn').onclick = () => showSettings();
@@ -943,6 +988,7 @@ function checkWin() {
 
 function endRound(w) {
   roundState = 'ended';
+  releaseMouse();
   updateScores();
   hideOverlays();
   $('winner').textContent = w.mine ? '🏆 You win!' : `🏆 ${w.name} wins!`;
@@ -1113,7 +1159,7 @@ function updateFreeze(now, inp) {
     freeze = null; return;
   }
   if (now < freeze.graceEnd || freeze.caught || me.koUntil > now) return;
-  const moved = Math.abs(inp.fwd) > 0.15 || Math.abs(inp.turn) > 0.15 || inp.jump || inp.zap || camMotion > 9;
+  const moved = Math.abs(inp.fwd) > 0.15 || Math.abs(inp.strafe) > 0.15 || inp.jump || inp.zap || camMotion > 9;
   if (moved) {
     freeze.caught = true;
     $('freeze').textContent = 'YOU MOVED!';
@@ -1334,7 +1380,7 @@ function applyPaint(m, fromId) {
 }
 
 // ----- aiming -----
-const aim = new THREE.Vector2(0, 0.05);          // normalised device coords of the crosshair
+const aim = new THREE.Vector2(0, 0);             // the crosshair is fixed in the centre
 const raycaster = new THREE.Raycaster();
 const crosshair = $('crosshair');
 function setAimFromEvent(e) {
@@ -1344,13 +1390,6 @@ function setAimFromEvent(e) {
 }
 let fireQueued = false;
 const paintOn = () => cfg.paint && playing();
-renderer.domElement.addEventListener('pointermove', (e) => { if (paintOn() && e.pointerType === 'mouse') setAimFromEvent(e); });
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (!paintOn()) return;
-  setAimFromEvent(e);                               // tap/click where you want to hit
-  if (!(cfg.mouth && facePresent())) fireQueued = true;
-});
-
 // ----- paintballs -----
 const balls = [];
 const ballGeo = new THREE.SphereGeometry(0.14, 10, 8);
@@ -1475,6 +1514,7 @@ function animateBody(parts, walk, speed) {
 function angleLerp(a, b, t) { let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI; if (d < -Math.PI) d += Math.PI * 2; return a + d * t; }
 
 let last = performance.now();
+let adsT = 0;
 let sendTimer = 0;
 let cardTimer = 0;
 const camPos = new THREE.Vector3();
@@ -1493,13 +1533,29 @@ function frame(now) {
     const inp = readInput();
     sampleCamera(now); updateFace(now); updateLoudness(dt);
     const ko = now < me.koUntil;
-    if (ko) { inp.fwd = 0; inp.turn = 0; inp.jump = false; inp.zap = false; }
+    if (ko) { inp.fwd = 0; inp.strafe = 0; inp.jump = false; inp.zap = false; inp.aim = false; }
     const stunned = now < me.stunUntil;
-    const speed = stunned ? 2.5 : 7;
-    me.rot += inp.turn * 2.6 * dt;
-    me.pos.x += Math.sin(me.rot) * inp.fwd * speed * dt;
-    me.pos.z += Math.cos(me.rot) * inp.fwd * speed * dt;
+    // look
+    const sens = inp.aim ? 0.0014 : 0.0024;
+    camYaw -= mouseDX * sens + touchLookDX * 0.006 + inp.lookX * 2.4 * dt;
+    camPitch -= mouseDY * sens + touchLookDY * 0.005 + inp.lookY * 1.6 * dt;
+    camPitch = Math.max(-0.75, Math.min(0.85, camPitch));
+    mouseDX = mouseDY = touchLookDX = touchLookDY = 0;
+    // move relative to the camera
+    const fyx = Math.sin(camYaw), fyz = Math.cos(camYaw), ryx = -fyz, ryz = fyx;
+    let mx = fyx * inp.fwd + ryx * inp.strafe, mz = fyz * inp.fwd + ryz * inp.strafe;
+    const ml = Math.hypot(mx, mz); if (ml > 1) { mx /= ml; mz /= ml; }
+    const sprinting = inp.sprint && !inp.aim && inp.fwd > 0.3;
+    const speed = stunned ? 2.5 : inp.aim ? 4 : sprinting ? 10.5 : 7;
+    me.pos.x += mx * speed * dt;
+    me.pos.z += mz * speed * dt;
     collide(me.pos);
+    // facing: towards where you're going, but square up to the crosshair when aiming or shooting
+    const combat = inp.aim || now - (me.lastShot || 0) < 600;
+    if (combat) me.rot = angleLerp(me.rot, camYaw, 1 - Math.exp(-dt * 20));
+    else if (ml > 0.1) me.rot = angleLerp(me.rot, Math.atan2(mx, mz), 1 - Math.exp(-dt * 10));
+    me.aiming = inp.aim;
+    const moveAmt = Math.min(1, ml);
     if (inp.jump && me.y === 0) me.vy = 7;
     me.vy -= 20 * dt; me.y = Math.max(0, me.y + me.vy * dt); if (me.y === 0) me.vy = 0;
     me.zapCooldown -= dt;
@@ -1508,23 +1564,24 @@ function frame(now) {
     if (cfg.mouth && playing() && facePresent()) fire = mouthFire() && !ko;   // mouth replaces the button
     if (fire && me.zapCooldown <= 0 && !stunned && !ko) {
       const power = cfg.shout && playing() ? loud : 0;
+      me.rot = camYaw; me.lastShot = now;               // shots go where the crosshair is
       if (paintOn()) { me.zapCooldown = 0.3; shootPaint(power); }
       else { me.zapCooldown = 0.6; tryZap(power); }
     }
-    crosshair.classList.toggle('hidden', !paintOn());
+    crosshair.classList.toggle('hidden', !started || overlayOpen());
     updateLaugh(now);
     updateFreeze(now, inp);
-    me.walk += Math.abs(inp.fwd) * dt * 10;
+    me.walk += moveAmt * dt * (sprinting ? 14 : 10);
 
     meParts.group.position.set(me.pos.x, me.y, me.pos.z);
     meParts.group.rotation.y = me.rot;
-    animateBody(meParts, me.walk, Math.abs(inp.fwd));
+    animateBody(meParts, me.walk, moveAmt);
     const mu = meParts.screenMat.uniforms;
     mu.staticAmt.value = stunned ? 0.75 : 0;
     mu.time.value = time;
     mu.damage.value = cfg.damage && !cfg.paint && roundId ? 1 - me.hp / MAX_HP : 0;
     mu.power.value += ((ko ? 0 : 1) - mu.power.value) * Math.min(1, dt * 6);
-    setOpacity(meParts, me.hidden ? 0.3 : 1);
+    setOpacity(meParts, me.hidden ? 0.3 : adsT > 0.5 ? 0.45 : 1);
     $('selfwrap').classList.toggle('ghost', me.hidden);
     $('hearts').textContent = !roundId ? '' : cfg.paint
       ? (ko ? '🎨 Painted out!' : `🎨 ${Math.round((mePaint?.coverage || 0) * 100)}% / ${PAINT_OUT * 100}%`)
@@ -1532,11 +1589,19 @@ function frame(now) {
     $('selfwrap').classList.toggle('stunned', stunned);
 
     // camera follow
-    const fx = Math.sin(me.rot), fz = Math.cos(me.rot), rx = -fz, rz = fx;   // forward / right (over-the-shoulder)
-    camPos.set(me.pos.x - fx * 6.5 + rx * 1.8, 5.6 + me.y * 0.5, me.pos.z - fz * 6.5 + rz * 1.8);
-    camera.position.lerp(camPos, 1 - Math.exp(-dt * 6));
-    lookAt.set(me.pos.x + fx * 6 + rx * 0.9, 2.3, me.pos.z + fz * 6 + rz * 0.9);
+    // over-the-right-shoulder camera; right mouse / Q / LT tightens in to aim
+    adsT += ((inp.aim ? 1 : 0) - adsT) * Math.min(1, dt * 12);
+    const dist = 5.2 - 1.9 * adsT, shoulder = 1.25 + 0.45 * adsT;
+    const cp = Math.cos(camPitch), dx = Math.sin(camYaw) * cp, dy = Math.sin(camPitch), dz = Math.cos(camYaw) * cp;
+    const pivX = me.pos.x + ryx * shoulder, pivY = 2.75 + me.y, pivZ = me.pos.z + ryz * shoulder;
+    camPos.set(pivX - dx * dist, Math.max(0.5, pivY - dy * dist), pivZ - dz * dist);
+    camera.position.lerp(camPos, 1 - Math.exp(-dt * 18));
+    lookAt.set(camera.position.x + dx * 10, camera.position.y + dy * 10, camera.position.z + dz * 10);
     camera.lookAt(lookAt);
+    const fov = 62 - 20 * adsT + (sprinting ? 6 : 0);
+    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 10); camera.updateProjectionMatrix(); }
+    crosshair.classList.toggle('ads', inp.aim);
+    $('lockHint').classList.toggle('hidden', isTouch || locked() || overlayOpen());
 
     sendTimer += dt;
     if (sendTimer > 1 / 15) {
@@ -1606,4 +1671,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };

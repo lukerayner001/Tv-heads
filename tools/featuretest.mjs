@@ -5,7 +5,7 @@ const errs = [];
 const mk = async (n, extra='&norender') => { const c = await b.newContext({ viewport: { width: 900, height: 600 } }); const p = await c.newPage(); p.on('pageerror', e => errs.push(n+': '+e.message)); await p.goto(base+extra); await p.fill('#name', n); return p; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const ev = (p, f, a) => p.evaluate(f, a);
-const place = (p, x, z, r) => ev(p, ([x,z,r]) => { const m = window.__tv.me; m.pos.set(x,0,z); m.rot = r; }, [x,z,r]);
+const place = (p, x, z, r) => ev(p, ([x,z,r]) => { const m = window.__tv.me; m.pos.set(x,0,z); m.rot = r; window.__tv.camYaw = r; }, [x,z,r]);
 const zap = async (p) => { await p.keyboard.down('KeyF'); await sleep(120); await p.keyboard.up('KeyF'); };
 const st = (p) => ev(p, () => ({ score: window.__tv.me.score, hp: window.__tv.me.hp, hidden: window.__tv.me.hidden, rid: window.__tv.roundId, state: window.__tv.roundState, photos: window.__tv.zapPhotos.length }));
 const vis = (p, id) => ev(p, id => !document.getElementById(id).classList.contains('hidden'), id);

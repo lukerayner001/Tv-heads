@@ -5,11 +5,16 @@ A browser multiplayer 3D game where every player is a character with a TV for a 
 **Play:** open the GitHub Pages link for this repo, tap **Host a new game**, and share the 4‑letter room code (or the *Copy invite* link). Works on PC and phone (front camera). Up to 6 players (rooms are capped). If the host leaves, another player automatically takes over the room code, and anyone who drops out rejoins on their own.
 
 ## Controls
-| | Keyboard | Gamepad | Phone |
+Third-person, over-the-shoulder shooter controls (Arc Raiders style).
+
+| | Keyboard + mouse | Gamepad | Phone |
 |---|---|---|---|
-| Move / turn | W/S, A/D (or arrows) | Left stick | Joystick |
+| Look / aim | Mouse (click the game to lock the cursor, Esc to free it) | Right stick | Drag on the screen |
+| Move / strafe | WASD | Left stick | Joystick |
+| Shoot | Left click (or F) | RT / RB | Quick tap or 🎨/ZAP button |
+| Aim down sights | Right click (or Q) | LT / LB | – |
+| Sprint | Shift | B / L3 | – |
 | Jump | Space | A | JUMP |
-| Zap | F | X / B / RT | ZAP |
 | Mute mic | M | – | 🎤 button |
 
 A zap fills the other player's screen with static and stuns them.
