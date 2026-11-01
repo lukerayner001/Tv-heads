@@ -121,6 +121,10 @@
   @media (pointer: coarse) { #loudMeter { left: 116px; } }
 
 
+  .danger { position: fixed; top: 0; bottom: 0; width: 16vw; pointer-events: none; opacity: 0; transition: opacity .25s; z-index: 2; }
+  .danger.on { opacity: 1; transition: opacity .04s; }
+  #dangerL { left: 0; background: linear-gradient(90deg, rgba(139,46,31,.6), transparent); }
+  #dangerR { right: 0; background: linear-gradient(-90deg, rgba(139,46,31,.6), transparent); }
   /* ===== dark vintage cartoon theme ===== */
   :root { --paper: #e9dcc0; --ink: #15110d; --blood: #8b2e1f; --mustard: #c9a227; }
   html, body { background: #0d0a08; font-family: 'Special Elite', 'Courier New', monospace; }
@@ -223,6 +227,7 @@
   <button class="tbtn" id="zapBtn">🔫</button>
 </div>
 
+<div id="dangerL" class="danger"></div><div id="dangerR" class="danger"></div>
 <div id="toast"></div>
 <div id="gfxMsg" class="hidden"></div>
 <img id="snapPop" alt="">

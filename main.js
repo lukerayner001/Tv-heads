@@ -476,7 +476,7 @@ function makeTVHead(color, name) {
     hand.scale.set(1, 0.92, 1.12);
     return pivot;
   };
-  const armL = makeArm(-1), armR = makeArm(1);
+  const armL = makeArm(1), armR = makeArm(-1);   // facing +z, the character's right is -x
   add(rig, new THREE.CylinderGeometry(0.07, 0.09, 0.32, 8), ink, 0, 1.86, 0);
 
   // the TV: a rounded wooden set with a toothy grin under the screen
@@ -503,9 +503,18 @@ function makeTVHead(color, name) {
   label.position.y = 3.75;
   g.add(label);
 
-  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.2, 0.6), toon({ color: 0x1b1b22 }));
-  gun.position.set(0, -0.78, 0.22); gun.visible = false; armR.add(gun);
-  return { group: g, rig, screenMat, screen, legL, legR, armL, armR, ants, label, gun };
+  // vintage ray-gun-style blaster held in the right glove (+z = barrel, -y = grip)
+  const gun = new THREE.Group(); gun.position.set(0, -0.8, 0.04); gun.rotation.x = Math.PI / 2; gun.visible = false; armR.add(gun);
+  const gunInner = new THREE.Group(); gun.add(gunInner);
+  const gm = toon({ color: 0x24211d }), brass = toon({ color: 0xb08d3c });
+  const recv = add(gunInner, new THREE.SphereGeometry(0.14, 12, 10), gm, 0, 0.02, 0.06); recv.scale.set(0.9, 0.95, 1.7);
+  const barrel = add(gunInner, new THREE.CylinderGeometry(0.05, 0.06, 0.5, 10), gm, 0, 0.04, 0.38); barrel.rotation.x = Math.PI / 2;
+  for (const z of [0.24, 0.34, 0.44]) add(gunInner, new THREE.TorusGeometry(0.075, 0.022, 6, 14), brass, 0, 0.04, z);
+  const bell = add(gunInner, new THREE.ConeGeometry(0.11, 0.16, 12, 1, true), brass, 0, 0.04, 0.66); bell.rotation.x = -Math.PI / 2;
+  const grip = add(gunInner, new THREE.BoxGeometry(0.08, 0.24, 0.11), gm, 0, -0.14, -0.04); grip.rotation.x = 0.35;
+  const mag = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.1, 14), brass); mag.rotation.z = Math.PI / 2; mag.position.set(0, -0.12, 0.16); mag.castShadow = true; gunInner.add(mag);
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.04, 0.76); gunInner.add(muzzle);
+  return { group: g, rig, screenMat, screen, legL, legR, armL, armR, ants, label, gun, gunInner, mag, muzzle, recoil: 0 };
 }
 
 function setLabel(p, name, muted = p.muted) {
@@ -790,7 +799,9 @@ function onData(from, m) {
       if (!p.seen) { p.pos.set(m.x, 0, m.z); p.rot = m.r; p.seen = true; }
       p.stunned = !!m.st;
       if (!!m.mu !== !!p.muted) setLabel(p, p.name, !!m.mu);
-      p.hp = m.hp ?? MAX_HP; p.ko = !!m.ko; p.hidden = !!m.hd; p.reloading = !!m.rl;
+      p.hp = m.hp ?? MAX_HP; p.ko = !!m.ko; p.hidden = !!m.hd;
+      if (!!m.rl && !p.reloading) p.rlStart = performance.now();
+      p.reloading = !!m.rl;
       { const sc = m.rd === roundId ? (m.sc | 0) : 0; if (p.score !== sc) { p.score = sc; updateScores(); } }
       break;
     case 'zap':
@@ -1796,23 +1807,39 @@ function applyPaint(m, fromId) {
 
 // ----- sound: tiny synthesized shot + glass crack -----
 let noiseBuf = null;
-function sfx(kind) {
-  if (!audioCtx || audioCtx.state !== 'running') return;
+function sfx(kind, vol = 1, pan = 0) {
+  if (window.__sfxLog) window.__sfxLog.push(kind);   // test hook
+  if (!audioCtx || audioCtx.state !== 'running' || vol <= 0.01) return;
   if (!noiseBuf) {
-    noiseBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.25, audioCtx.sampleRate);
+    noiseBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.4, audioCtx.sampleRate);
     const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   }
   const src = audioCtx.createBufferSource(); src.buffer = noiseBuf;
-  const f = audioCtx.createBiquadFilter(); const gn = audioCtx.createGain();
-  const t = audioCtx.currentTime;
-  if (kind === 'click' || kind === 'reload') {
-    f.type = 'highpass'; f.frequency.value = kind === 'click' ? 3500 : 1800;
-    gn.gain.setValueAtTime(kind === 'click' ? 0.12 : 0.22, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
-    if (kind === 'reload') { gn.gain.setValueAtTime(0.22, t + 0.09); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.13); }
-  } else if (kind === 'shot') { f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 0.7; gn.gain.setValueAtTime(0.18, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.07); }
-  else { f.type = 'highpass'; f.frequency.value = 2500; gn.gain.setValueAtTime(0.35, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.18); }
-  src.connect(f); f.connect(gn); gn.connect(audioCtx.destination);
-  src.start(t); src.stop(t + 0.25);
+  const f = audioCtx.createBiquadFilter(), gn = audioCtx.createGain();
+  const out = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+  if (out) out.pan.value = Math.max(-1, Math.min(1, pan));
+  const t = audioCtx.currentTime, G = (v, at) => gn.gain.setValueAtTime(v * vol, t + at), R = (v, at) => gn.gain.exponentialRampToValueAtTime(Math.max(0.0001, v * vol), t + at);
+  let len = 0.25;
+  switch (kind) {
+    case 'click': f.type = 'highpass'; f.frequency.value = 3500; G(0.12, 0); R(0.001, 0.03); break;
+    case 'reload': f.type = 'highpass'; f.frequency.value = 1800; G(0.22, 0); R(0.001, 0.03); G(0.22, 0.09); R(0.001, 0.13); break;
+    case 'shot': f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 0.7; G(0.18, 0); R(0.001, 0.07); break;
+    case 'whizz':                                                      // a bullet zipping past your head
+      f.type = 'bandpass'; f.Q.value = 3; f.frequency.setValueAtTime(3200, t); f.frequency.exponentialRampToValueAtTime(650, t + 0.2);
+      G(0.0001, 0); R(0.7, 0.04); R(0.001, 0.22); len = 0.3; break;
+    case 'thud': f.type = 'lowpass'; f.frequency.value = 700; G(0.5, 0); R(0.001, 0.1); break;
+    case 'glass': f.type = 'highpass'; f.frequency.value = 3200; G(0.4, 0); R(0.001, 0.16); break;
+    default: f.type = 'highpass'; f.frequency.value = 2500; G(0.35, 0); R(0.001, 0.18);   // my screen cracking
+  }
+  src.connect(f); f.connect(gn);
+  if (out) { gn.connect(out); out.connect(audioCtx.destination); } else gn.connect(audioCtx.destination);
+  src.start(t); src.stop(t + len);
+}
+// how loud / which side a point in the world is for me
+function distVol(p, range) { const d = Math.hypot(p.x - me.pos.x, p.y - (me.pos.y + 2.4), p.z - me.pos.z); return Math.pow(Math.max(0, 1 - d / range), 1.5); }
+function panOf(p) {
+  const dx = p.x - me.pos.x, dz = p.z - me.pos.z, l = Math.hypot(dx, dz) || 1;
+  return ((dx / l) * -Math.cos(camYaw) + (dz / l) * Math.sin(camYaw)) * 0.85;
 }
 
 // ----- aiming (fixed centre crosshair) -----
@@ -1865,7 +1892,8 @@ function ownerOf(o) {
   while (o) { for (const p of remotes.values()) if (p.parts.group === o) return p; o = o.parent; }
   return null;
 }
-function muzzlePos() {
+function muzzlePos(parts = meParts) {
+  if (parts && parts.gun.visible) { parts.group.updateMatrixWorld(true); return parts.muzzle.getWorldPosition(new THREE.Vector3()); }
   const fx_ = Math.sin(me.rot), fz = Math.cos(me.rot);
   return new THREE.Vector3(me.pos.x + fx_ * 0.9 - fz * 0.6, 1.15 + me.y, me.pos.z + fz * 0.9 + fx_ * 0.6);
 }
@@ -1887,25 +1915,32 @@ function shootPaint(power = 0) {
     if (owner && (owner.hidden || owner.ko || !owner.seen)) continue;
     hit = { h, owner }; break;
   }
-  const end = hit ? hit.h.point : raycaster.ray.at(90, new THREE.Vector3());
+  const end = hit ? hit.h.point.clone() : raycaster.ray.at(90, new THREE.Vector3());
   gunHeat = Math.min(1, gunHeat + 0.12);
-  tracer(muzzle, end); flash(muzzle); sfx('shot');
-  let kind = 0;
+  flash(muzzle); sfx('shot');
+  if (meParts) meParts.recoil = 1;
+  let kind = 0, onArrive = null;
+  const rd = roundId;
   if (hit && hit.owner) {
     kind = 2;
-    glass(end);
-    if (hit.h.object === hit.owner.parts.screen && hit.h.uv) {
-      const msg = { t: 'paint', id: hit.owner.id, u: +hit.h.uv.x.toFixed(3), v: +hit.h.uv.y.toFixed(3), s: 0.2 + 0.1 * power, seed: (Math.random() * 1e9) | 0, rd: roundId };
+    const target = hit.owner, onScreen = hit.h.object === target.parts.screen && hit.h.uv;
+    const u = onScreen ? +hit.h.uv.x.toFixed(3) : 0, v = onScreen ? +hit.h.uv.y.toFixed(3) : 0;
+    onArrive = () => {
+      glass(end);
+      if (!onScreen) return;
+      const msg = { t: 'paint', id: target.id, u, v, s: 0.2 + 0.1 * power, seed: (Math.random() * 1e9) | 0, rd };
       applyPaint(msg, peer.id);
       broadcast(msg);
       const now = performance.now();
-      if (now - (lastSnap.get(hit.owner.id) || 0) > 1500) { lastSnap.set(hit.owner.id, now); zapCam(hit.owner); }
-    }
+      if (now - (lastSnap.get(target.id) || 0) > 1500) { lastSnap.set(target.id, now); zapCam(target); }
+    };
   } else if (hit) {
     kind = 1;
     _n.copy(hit.h.face ? hit.h.face.normal : new THREE.Vector3(0, 1, 0)).transformDirection(hit.h.object.matrixWorld);
-    bulletHole(end, _n); sparks(end);
+    const n = _n.clone();
+    onArrive = () => { bulletHole(end, n); sparks(end); };
   }
+  launchBullet(muzzle, end, true, onArrive);
   const r2 = (v) => +v.toFixed(2);
   broadcast({ t: 'shot', o: muzzle.toArray().map(r2), e: end.toArray().map(r2), k: kind, n: kind === 1 ? _n.toArray().map(r2) : undefined });
 }
@@ -1919,9 +1954,16 @@ function onPaintData(p, m) {
   switch (m.t) {
     case 'shot': {
       const a = new THREE.Vector3().fromArray(m.o), b = new THREE.Vector3().fromArray(m.e);
-      tracer(a, b); flash(a);
-      if (m.k === 1 && m.n) { bulletHole(b, new THREE.Vector3().fromArray(m.n)); sparks(b); }
-      else if (m.k === 2) glass(b);
+      flash(a);
+      p.parts.recoil = 1;
+      sfx('shot', distVol(a, 40) * 0.8, panOf(a));
+      const n = m.n ? new THREE.Vector3().fromArray(m.n) : null;
+      launchBullet(a, b, false, () => {
+        if (m.k === 1 && n) { bulletHole(b, n); sparks(b); }
+        else if (m.k === 2) glass(b);
+        const v = distVol(b, 16);
+        if (v > 0.02) sfx(m.k === 2 ? 'glass' : 'thud', v, panOf(b));
+      });
       return true;
     }
     case 'paint': applyPaint(m, p.id); return true;
@@ -2071,6 +2113,93 @@ function updateReload(now, inp, trigger) {
   crosshair.classList.toggle('dim', r);
 }
 
+// ---------- bullets in flight ----------
+const BULLET_SPEED = 95;
+const bulletGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.8, 6); bulletGeo.rotateX(Math.PI / 2);
+const trailGeo = new THREE.CylinderGeometry(0.02, 0.045, 1, 6); trailGeo.rotateX(Math.PI / 2); trailGeo.translate(0, 0, -0.5);
+const glowGeo = new THREE.SphereGeometry(0.17, 10, 8);
+const bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff8d8 });
+const trailMat = new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
+const glowMat = new THREE.MeshBasicMaterial({ color: 0xffe6a0, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false });
+const bullets = [];
+function launchBullet(from, to, mine, onArrive) {
+  const dir = to.clone().sub(from), dist = dir.length();
+  if (dist < 0.05) { onArrive && onArrive(); return; }
+  dir.divideScalar(dist);
+  const g = new THREE.Group();
+  const core = new THREE.Mesh(bulletGeo, bulletMat), trail = new THREE.Mesh(trailGeo, trailMat), glow = new THREE.Mesh(glowGeo, glowMat);
+  for (const m of [core, trail, glow]) { m.userData.fx = true; g.add(m); }
+  g.userData.fx = true;
+  g.position.copy(from); g.lookAt(to); trail.scale.z = 0.01;
+  scene.add(g);
+  const b = { g, trail, from: from.clone(), dir, dist, t: 0, onArrive, whizzAt: -1 };
+  if (!mine && started) {
+    // will it pass close to my head? then I should hear it go by
+    const H = new THREE.Vector3(me.pos.x, me.pos.y + 2.4, me.pos.z);
+    const ts = Math.max(0, Math.min(dist, H.clone().sub(from).dot(dir)));
+    const close = from.clone().addScaledVector(dir, ts), d = close.distanceTo(H);
+    if (d < 4 && ts > 1) { b.whizzAt = ts; b.whizzVol = 1 - d / 4; b.whizzPan = panOf(close); }
+  }
+  bullets.push(b);
+}
+function updateBullets(dt) {
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.t += BULLET_SPEED * dt;
+    const d = Math.min(b.t, b.dist);
+    b.g.position.copy(b.from).addScaledVector(b.dir, d);
+    b.trail.scale.z = Math.max(0.01, Math.min(d, 3.2));
+    if (b.whizzAt >= 0 && b.t >= b.whizzAt) { sfx('whizz', b.whizzVol, b.whizzPan); dangerFlash(b.whizzPan); b.whizzAt = -1; }
+    if (b.t >= b.dist) {
+      scene.remove(b.g);
+      bullets.splice(i, 1);
+      if (b.onArrive) b.onArrive();
+    }
+  }
+}
+let dangerT = [0, 0];
+function dangerFlash(pan) {
+  const now = performance.now();
+  if (pan < 0.3) dangerT[0] = now + 260;
+  if (pan > -0.3) dangerT[1] = now + 260;
+  $('dangerL').classList.toggle('on', true); $('dangerR').classList.toggle('on', true);
+}
+function updateDanger(now) {
+  $('dangerL').classList.toggle('on', now < dangerT[0]);
+  $('dangerR').classList.toggle('on', now < dangerT[1]);
+}
+
+// ---------- blaster pose: aim, recoil, and the reload routine ----------
+function gunPose(parts, prog, dt) {
+  parts.gun.visible = true;
+  parts.recoil = Math.max(0, (parts.recoil || 0) - dt * 9);
+  const r = parts.recoil;
+  let armRx = -1.45, armLx = -1.2, armLz = null, tiltZ = 0, tiltX = 0, magOff = 0, magVis = true;
+  if (prog >= 0) {
+    const e = (a, b) => Math.min(1, Math.max(0, (prog - a) / (b - a)));
+    const down = e(0, 0.14) - e(0.86, 1);                  // tip the gun over to look at it
+    armRx += 0.75 * down; tiltZ = 1.0 * down; tiltX = -0.25 * down;
+    if (prog > 0.15 && !parts.magDropped) {                 // old drum falls out
+      parts.magDropped = true;
+      const drop = parts.mag.clone(); parts.mag.getWorldPosition(drop.position); parts.mag.getWorldQuaternion(drop.quaternion);
+      drop.material = drop.material.clone(); drop.material.transparent = true;
+      fx(drop, 1.1, new THREE.Vector3((Math.random() - 0.5) * 2, 1.5, (Math.random() - 0.5) * 2));
+    }
+    magVis = prog < 0.15 || prog > 0.5;
+    magOff = prog > 0.5 ? -0.45 * (1 - e(0.5, 0.7)) : 0;    // new drum slides up into place
+    const reach = e(0.32, 0.5) - e(0.7, 0.84);              // left glove brings it over
+    armLx = -1.2 - 0.3 * reach; armLz = -0.55 * reach;
+    if (prog > 0.74 && prog < 0.86) tiltX -= 0.45 * Math.sin(((prog - 0.74) / 0.12) * Math.PI);   // cock it
+  } else parts.magDropped = false;
+  parts.armR.rotation.x = armRx - 0.28 * r;
+  parts.armL.rotation.x = armLx;
+  if (armLz !== null) parts.armL.rotation.z = armLz;
+  parts.gunInner.rotation.set(tiltX - 0.35 * r, 0, tiltZ);
+  parts.gunInner.position.z = -0.1 * r;
+  parts.mag.visible = magVis;
+  parts.mag.position.y = -0.12 + magOff;
+}
+
 // ---------- animate ----------
 function animateBody(parts, walk, speed) {
   const t = performance.now() / 1000 + (parts.phase ??= Math.random() * 10);
@@ -2084,7 +2213,7 @@ function animateBody(parts, walk, speed) {
   parts.rig.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
   parts.rig.rotation.z = Math.sin(walk * 0.5) * 0.06 * speed + Math.sin(t * 1.7) * 0.02;
   const wob = Math.sin(t * 2.4) * 0.07;
-  parts.armL.rotation.z = -0.22 - wob; parts.armR.rotation.z = 0.22 + wob;
+  parts.armL.rotation.z = 0.22 + wob; parts.armR.rotation.z = -0.22 - wob;
   parts.ants.rotation.z = Math.sin(t * 3.1) * 0.12; parts.ants.rotation.x = Math.sin(t * 2.3) * 0.08;
 }
 function angleLerp(a, b, t) { let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI; if (d < -Math.PI) d += Math.PI * 2; return a + d * t; }
@@ -2156,7 +2285,7 @@ function frame(now) {
     meParts.group.rotation.y = me.rot;
     animateBody(meParts, me.walk, moveAmt);
     meParts.gun.visible = paintOn();
-    if (paintOn()) { const rl = reloading(); meParts.armR.rotation.x = rl ? -0.55 : -1.45; meParts.armL.rotation.x = rl ? -0.9 : -1.2; meParts.gun.rotation.x = rl ? 0.6 : 0; }
+    if (paintOn()) gunPose(meParts, reloading() ? 1 - (reloadUntil - now) / RELOAD_MS : -1, dt);
     const mu = meParts.screenMat.uniforms;
     mu.staticAmt.value = stunned ? 0.75 : 0;
     mu.time.value = time;
@@ -2216,7 +2345,7 @@ function frame(now) {
     p.parts.group.visible = p.seen;
     animateBody(p.parts, p.walk, Math.min(1, sp / 7));
     p.parts.gun.visible = paintOn();
-    if (paintOn()) { p.parts.armR.rotation.x = p.reloading ? -0.55 : -1.45; p.parts.armL.rotation.x = p.reloading ? -0.9 : -1.2; p.parts.gun.rotation.x = p.reloading ? 0.6 : 0; }
+    if (paintOn()) gunPose(p.parts, p.reloading ? Math.min(1, Math.max(0, (performance.now() - p.rlStart) / RELOAD_MS)) : -1, dt);
     const u = p.parts.screenMat.uniforms;
     u.time.value = time;
     u.staticAmt.value = p.stunned ? 0.75 : (u.hasVideo.value ? 0 : 0.15);
@@ -2239,6 +2368,8 @@ function frame(now) {
 
   updateBillboards(time);
   updateDecor(time, dt);
+  updateBullets(dt);
+  updateDanger(now);
   updateBalls(dt);
   flushView();
   checkWin();
@@ -2262,4 +2393,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { get ammo() { return ammo; }, get reloadingNow() { return reloading(); }, spotClear, gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { get bulletsInFlight() { return bullets.length; }, muzzlePos, get meParts() { return meParts; }, get ammo() { return ammo; }, get reloadingNow() { return reloading(); }, spotClear, gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };

@@ -46,6 +46,7 @@ check('others see A clean again', remoteCov2 === 0);
 const d0 = await H.evaluate(() => window.__tv.decals);
 await H.evaluate(() => { window.__tv.camYaw = Math.PI/2; window.__tv.me.rot = Math.PI/2; }); await sleep(500);
 await H.evaluate(() => { window.__tv.aim.set(0, -0.3); window.__tv.shootPaint(0); });
+await sleep(2500);
 check('bullet holes on the level', (await H.evaluate(() => window.__tv.decals)) > d0);
 console.log(`${ok} passed, ${bad} failed`, errs);
 await b.close();

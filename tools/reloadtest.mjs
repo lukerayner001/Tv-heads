@@ -33,6 +33,7 @@ await M.waitForFunction(() => document.getElementById('roomcode').textContent.le
 const cdp = await M.context().newCDPSession(M);
 const tap = async (sel, ms) => { const bb = await M.locator(sel).boundingBox(); await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bb.x + bb.width/2, y: bb.y + bb.height/2, id: 9 }] }); await sleep(ms); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); };
 await tap('#zapBtn', 1500);
+await M.waitForFunction(() => window.__tv.ammo < 20, null, { timeout: 20000 }).catch(() => {});
 await tap('#reloadBtn', 120);
 check('phone reload button works', await M.evaluate(() => window.__tv.reloadingNow));
 await M.screenshot({ path: 'tools/reload-phone.png' });
