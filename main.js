@@ -29,6 +29,8 @@ const gpuName = (() => {
 })();
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+let useFilm = !qs.has('nofilm') && lsGet('tvhead-nofilm') !== '1';
+const LINOUT = { value: useFilm ? 1 : 0 };
 const safeGfx = qs.has('safe') || lsGet('tvhead-safe') === '1' || (lsGet('tvhead-safe') !== '0' && /PowerVR|Imagination/i.test(gpuName));
 const renderer = new THREE.WebGLRenderer({ antialias: !isTouch && !safeGfx, precision: safeGfx ? 'mediump' : 'highp', powerPreference: safeGfx ? 'default' : 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, safeGfx ? 1 : isTouch ? 1.5 : 2));   // lighter on phones = smoother
@@ -177,9 +179,9 @@ scene.add(fill);
 // sky dome with a sunset glow and stars
 {
   const sky = new THREE.Mesh(new THREE.SphereGeometry(170, 48, 32), new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
+    side: THREE.BackSide, depthWrite: false, fog: false, uniforms: { linOut: LINOUT },
     vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: `varying vec3 vP;
+    fragmentShader: `uniform float linOut; varying vec3 vP;
       float h(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 45758.5); }
       void main(){
         vec3 d = normalize(vP);                       // normalise per pixel (per vertex gives triangle artefacts)
@@ -192,7 +194,7 @@ scene.add(fill);
         vec2 g = floor(d.xz / max(y, 0.2) * 260.0);   // star grid projected onto the sky
         float s = step(0.9975, h(g)) * smoothstep(0.25, 0.55, y) * (0.5 + 0.5 * h(g + 7.0));
         c += vec3(s);
-        gl_FragColor = vec4(pow(c, vec3(2.2)), 1.0);
+        gl_FragColor = vec4(linOut > 0.5 ? pow(c, vec3(2.2)) : c, 1.0);
       }`,
   }));
   sky.renderOrder = -1;
@@ -373,6 +375,7 @@ const SCREEN_ASPECT = 1.15 / 0.86;
 function makeScreenMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {
+      linOut: LINOUT,
       map: { value: cardTex },
       card: { value: cardTex },
       hasVideo: { value: 0 },
@@ -389,7 +392,7 @@ function makeScreenMaterial() {
     fragmentShader: `
       uniform sampler2D map; uniform sampler2D card; uniform float hasVideo; uniform float videoAspect;
       uniform float time; uniform float staticAmt; uniform float power;
-      uniform float alpha; uniform float damage; uniform sampler2D crack; uniform sampler2D paint;
+      uniform float alpha; uniform float damage; uniform sampler2D crack; uniform sampler2D paint; uniform float linOut;
       varying vec2 vUv;
       float rnd(vec2 c){ return fract(sin(dot(c, vec2(12.9898,78.233))) * 43758.5453); }
       void main(){
@@ -418,7 +421,7 @@ function makeScreenMaterial() {
         col *= 0.86 + 0.14 * sin(suv.y * 480.0);          // scanlines
         col *= 1.0 - d * 1.1;                               // vignette
         col += (1.0 - power) * 0.8;                         // flash when switching off
-        gl_FragColor = vec4(pow(max(col, 0.0), vec3(2.2)), alpha);   // to linear (the film pass converts back)
+        gl_FragColor = vec4(linOut > 0.5 ? pow(max(col, 0.0), vec3(2.2)) : col, alpha);   // linear for the film pass
       }`,
   });
 }
@@ -1047,6 +1050,8 @@ try { $('name').value = localStorage.getItem('tvhead-name') || ''; } catch {}
 if (/^#[A-Za-z]{4}$/.test(location.hash)) $('code').value = location.hash.slice(1).toUpperCase();
 else { try { const rc = sessionStorage.getItem('tvhead-room'); if (rc) $('code').value = rc; } catch {} }
 $('safeGfx').checked = safeGfx;
+$('filmOpt').checked = useFilm;
+$('filmOpt').onchange = () => { lsSet('tvhead-nofilm', $('filmOpt').checked ? '0' : '1'); setFilm($('filmOpt').checked); };
 $('safeGfx').onchange = () => { lsSet('tvhead-safe', $('safeGfx').checked ? '1' : '0'); location.reload(); };
 $('gpuName').textContent = gpuName;
 $('copyBtn').onclick = async () => {
@@ -1982,11 +1987,15 @@ const filmMat = new THREE.ShaderMaterial({
   uniforms: { tColor: { value: filmRT.texture }, tDepth: { value: filmRT.depthTexture }, res: { value: new THREE.Vector2(1, 1) },
     time: { value: 0 }, near: { value: camera.near }, far: { value: camera.far }, inkW: { value: 1 }, hit: { value: 0 } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  defines: Object.assign(safeGfx ? { NO_DEPTH_INK: 1 } : {}, qs.has('blacktest') ? { BLACK_TEST: 1 } : {}),   // blacktest = test hook
   fragmentShader: `
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+    #endif
     uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 res; uniform float time, near, far, inkW, hit;
     varying vec2 vUv;
     float h1(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-    float lin(float d){ float z = d * 2.0 - 1.0; return (2.0 * near * far) / (far + near - z * (far - near)); }
+    float lin(float d){ float z = clamp(d, 0.0, 1.0) * 2.0 - 1.0; return (2.0 * near * far) / max(far + near - z * (far - near), 0.001); }
     vec3 srgb(vec3 c){ return pow(max(c, 0.0), vec3(1.0 / 2.2)); }
     float L(vec2 uv){ return dot(srgb(texture2D(tColor, uv).rgb), vec3(0.299, 0.587, 0.114)); }
     void main(){
@@ -1994,10 +2003,13 @@ const filmMat = new THREE.ShaderMaterial({
       vec2 uv = vUv + vec2(h1(vec2(fr, 1.0)) - 0.5, h1(vec2(fr, 2.0)) - 0.5) * vec2(0.0012, 0.0018);
       vec2 px = inkW / res;
       // ink lines: depth jumps (silhouettes) + brightness jumps (details)
-      float dc = lin(texture2D(tDepth, uv).r);
+      float de = 0.0;
+      #ifndef NO_DEPTH_INK
+      float dc = max(lin(texture2D(tDepth, uv).r), 0.05);
       float dx = abs(lin(texture2D(tDepth, uv + vec2(px.x, 0.0)).r) - lin(texture2D(tDepth, uv - vec2(px.x, 0.0)).r));
       float dy = abs(lin(texture2D(tDepth, uv + vec2(0.0, px.y)).r) - lin(texture2D(tDepth, uv - vec2(0.0, px.y)).r));
-      float de = smoothstep(0.035, 0.09, (dx + dy) / dc) * (1.0 - smoothstep(60.0, 140.0, dc));
+      de = smoothstep(0.035, 0.09, min((dx + dy) / dc, 10.0)) * (1.0 - smoothstep(60.0, 140.0, dc));
+      #endif
       float lx = L(uv + vec2(px.x, 0.0)) - L(uv - vec2(px.x, 0.0)), ly = L(uv + vec2(0.0, px.y)) - L(uv - vec2(0.0, px.y));
       float le = smoothstep(0.16, 0.38, length(vec2(lx, ly)));
       float ink = max(de, le * 0.75);
@@ -2019,12 +2031,16 @@ const filmMat = new THREE.ShaderMaterial({
       col = mix(col, vec3(0.05), step(distance(vUv * vec2(res.x / res.y, 1.0), dp * vec2(res.x / res.y, 1.0)), 0.004) * step(0.7, h1(vec2(fr, 9.0))));
       col *= 0.93 + 0.07 * h1(vec2(fr, 4.0));                         // projector flicker
       gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+      #ifdef BLACK_TEST
+      gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      #endif
     }`,
   depthTest: false, depthWrite: false,
 });
 filmScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), filmMat));
 const _dbs = new THREE.Vector2();
 function renderFilm(time) {
+  if (!useFilm) { renderer.setRenderTarget(null); renderer.render(scene, camera); return; }
   renderer.getDrawingBufferSize(_dbs);
   if (filmRT.width !== _dbs.x || filmRT.height !== _dbs.y) { filmRT.setSize(_dbs.x, _dbs.y); filmMat.uniforms.res.value.copy(_dbs); filmMat.uniforms.inkW.value = Math.max(1, _dbs.y / 720); }
   filmMat.uniforms.time.value = time;
@@ -2040,14 +2056,28 @@ function renderFilm(time) {
 // If the 3D view comes out solid white (a driver bug), switch to simple graphics and reload.
 let gfxNext = 3000, gfxWhite = 0;
 const px = new Uint8Array(4);
+let gfxBlack = 0;
 function gfxCheck(now) {
-  if (now < gfxNext || now > 60000 || !started) return;
-  gfxNext = now + 1500;
-  const w = filmRT.width, h = filmRT.height;
-  let white = 0;
+  if (now < gfxNext || !started) return;
+  gfxNext = now + (now < 60000 ? 1500 : 3000);
+  const gl = renderer.getContext();
+  const w = useFilm ? filmRT.width : gl.drawingBufferWidth, h = useFilm ? filmRT.height : gl.drawingBufferHeight;
+  let white = 0, sceneDark = 0;
   for (const [fx, fy] of [[0.2, 0.8], [0.8, 0.8], [0.5, 0.95], [0.15, 0.3], [0.85, 0.3]]) {
-    renderer.readRenderTargetPixels(filmRT, Math.floor(w * fx), Math.floor(h * fy), 1, 1, px);   // the 3D image before the film grade
+    if (useFilm) renderer.readRenderTargetPixels(filmRT, Math.floor(w * fx), Math.floor(h * fy), 1, 1, px);   // the 3D image before the film grade
+    else gl.readPixels(Math.floor(w * fx), Math.floor(h * fy), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
     if (px[0] > 245 && px[1] > 245 && px[2] > 245) white++;
+    if (px[0] < 3 && px[1] < 3 && px[2] < 3) sceneDark++;
+  }
+  if (useFilm) {
+    // the 3D image is fine but what reaches the screen is solid black: the film filter has broken on this GPU
+    let black = 0;
+    for (const [fx, fy] of [[0.5, 0.5], [0.4, 0.6], [0.6, 0.4], [0.5, 0.3], [0.5, 0.7]]) {
+      gl.readPixels(Math.floor(gl.drawingBufferWidth * fx), Math.floor(gl.drawingBufferHeight * fy), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      if (px[0] < 3 && px[1] < 3 && px[2] < 3) black++;
+    }
+    gfxBlack = black === 5 && sceneDark < 3 ? gfxBlack + 1 : 0;
+    if (gfxBlack >= 2) { setFilm(false); lsSet('tvhead-nofilm', '1'); toast('Film filter switched off for this device'); gfxBlack = 0; }
   }
   gfxWhite = white >= 4 ? gfxWhite + 1 : 0;
   if (gfxWhite >= 2) {
@@ -2055,6 +2085,10 @@ function gfxCheck(now) {
     else showGfxProblem('The 3D view isn’t drawing on this device.');
     gfxNext = Infinity;
   }
+}
+function setFilm(on) {
+  useFilm = on; LINOUT.value = on ? 1 : 0;
+  $('filmOpt').checked = on;
 }
 function showGfxProblem(msg) {
   $('gfxMsg').innerHTML = `📺 ${msg}<br><small>Graphics chip: ${escapeHtml(gpuName)}</small><br><button id="gfxReload">Reload</button>`;
@@ -2393,4 +2427,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { get bulletsInFlight() { return bullets.length; }, muzzlePos, get meParts() { return meParts; }, get ammo() { return ammo; }, get reloadingNow() { return reloading(); }, spotClear, gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { get useFilm() { return useFilm; }, get bulletsInFlight() { return bullets.length; }, muzzlePos, get meParts() { return meParts; }, get ammo() { return ammo; }, get reloadingNow() { return reloading(); }, spotClear, gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
