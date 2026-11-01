@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>TV Heads</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Creepster&family=Special+Elite&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1f3b; font-family: system-ui, -apple-system, sans-serif; color: #fff;
@@ -118,6 +120,50 @@
   #loudMeter div { height: 100%; width: 0; background: linear-gradient(90deg, #ffd166, #ef476f); }
   @media (pointer: coarse) { #loudMeter { left: 116px; } }
 
+
+  /* ===== dark vintage cartoon theme ===== */
+  :root { --paper: #e9dcc0; --ink: #15110d; --blood: #8b2e1f; --mustard: #c9a227; }
+  html, body { background: #0d0a08; font-family: 'Special Elite', 'Courier New', monospace; }
+  h1, #winner, #freeze, .overlay h2 { font-family: 'Creepster', 'Special Elite', cursive; letter-spacing: 2px; font-weight: 400; }
+  #lobby { background: radial-gradient(ellipse at center, rgba(20,14,10,.35), rgba(5,3,2,.85)); backdrop-filter: none; }
+  .card { background: var(--paper); color: var(--ink); border: 4px double var(--ink); border-radius: 4px; box-shadow: 6px 6px 0 #000, 0 0 60px rgba(0,0,0,.7); }
+  h1 { font-size: 52px; color: var(--ink); line-height: 1; text-shadow: 3px 3px 0 var(--blood); }
+  h1 span { background: var(--ink); border: 3px solid var(--ink); color: var(--paper); border-radius: 6px; font-size: 30px; vertical-align: middle; }
+  .sub, label, .help, .gfxopt, .gfxopt small, .gpu, .muted, .or { color: #4b3f31 !important; }
+  input, select { background: #f6eedb; color: var(--ink); border: 2px solid var(--ink); border-radius: 3px; font-family: inherit; }
+  input:focus { border-color: var(--blood); }
+  button { font-family: 'Special Elite', monospace; border-radius: 4px; }
+  .big { background: var(--blood); color: var(--paper); border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); text-transform: uppercase; letter-spacing: 1px; }
+  .big.join { background: var(--ink); }
+  .big:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+  .ghostbtn { background: transparent; color: var(--ink); border: 2px dashed var(--ink); box-shadow: none; }
+  #room, #scores, #chips, #ammo, #hearts, .keys, #waiting { background: rgba(21,17,13,.82); color: var(--paper); border: 2px solid var(--paper); border-radius: 3px; box-shadow: 3px 3px 0 #000; }
+  #hearts { padding: 3px 8px; font-size: 16px; }
+  #roomcode { color: var(--mustard); }
+  #copyBtn, #micBtn, #settingsBtn { background: var(--paper); color: var(--ink); border: 2px solid var(--ink); }
+  #micBtn.off { background: var(--blood); color: var(--paper); }
+  #toast { background: var(--paper); color: var(--ink); border: 3px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 #000; }
+  #ammoBar { background: var(--mustard); }
+  #ammo.low #ammoCount { color: #ff7b5c; }
+  #ammo.reloading #ammoBar { background: var(--paper); }
+  #ammo.reloading #ammoCount { color: var(--paper); }
+  #crosshair { border-color: var(--paper); }
+  #crosshair::after { background: var(--blood); }
+  #selfwrap { border: 6px solid #6b4630; border-radius: 14px; box-shadow: 3px 3px 0 #000; }
+  #selfwrap video { filter: sepia(.75) contrast(1.15) brightness(.95); }
+  .tbtn { background: var(--paper) !important; color: var(--ink) !important; border: 3px solid var(--ink); box-shadow: 3px 3px 0 #000; font-family: 'Special Elite', monospace; }
+  #zapBtn { background: var(--blood) !important; color: var(--paper) !important; }
+  #aimBtn.on { background: var(--mustard) !important; }
+  #stick { border-color: var(--paper); background: rgba(233,220,192,.12); }
+  #knob { background: var(--paper); border: 2px solid var(--ink); }
+  .feat { border-bottom-color: #b8a988; color: var(--ink); }
+  #gallery figure { border-color: #6b4630; }
+  #finalScores { color: var(--ink); }
+  #winner { font-size: 44px; color: var(--ink); text-shadow: 3px 3px 0 var(--blood); }
+  .nextin { color: var(--blood); font-size: 22px; }
+  #freeze { color: var(--paper); text-shadow: 4px 4px 0 var(--blood), 0 0 30px #000; }
+  #gfxMsg { background: var(--paper); color: var(--ink); border-color: var(--blood); }
+  #lockHint { background: rgba(21,17,13,.82); border: 2px solid var(--paper); color: var(--paper); border-radius: 3px; }
   @media (max-width: 640px) {
     #room { padding: 5px 8px; font-size: 12px; gap: 6px; }
     #roomcode { font-size: 15px; letter-spacing: 2px; }
@@ -127,6 +173,8 @@
     #waiting { top: 120px; font-size: 13px; }
     #freeze { font-size: 46px; }
     #hearts { font-size: 14px; }
+    #chips { max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #scores { max-width: 46%; }
   }
 </style>
 </head>
@@ -139,7 +187,7 @@
 <div id="lobby">
   <div class="card">
     <h1><span>📺</span>TV HEADS</h1>
-    <p class="sub">Your webcam is your face.</p>
+    <p class="sub">Your webcam is your face. Mind the grin.</p>
     <label for="name">Your name</label>
     <input id="name" maxlength="14" placeholder="e.g. Luke" autocomplete="off">
     <button class="big" id="hostBtn">Host a new game</button>

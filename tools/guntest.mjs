@@ -17,7 +17,7 @@ await sleep(1500);
 // aim at a point on A's screen (slightly off centre each shot) and fire
 const shoot = async (ox, oy) => H.evaluate(([ox, oy]) => {
   const p = [...window.__tv.remotes.values()][0];
-  const THREEv = p.parts.group.position.clone(); THREEv.y += 2.3 + oy; THREEv.x += ox;
+  const THREEv = p.parts.screen.getWorldPosition(p.parts.group.position.clone()); THREEv.y += oy; THREEv.x += ox;
   // project with the camera via the aim vector: use the renderer's camera from a ball origin trick
   const cam = window.__tvcam; const v = THREEv.project(cam);
   window.__tv.aim.set(v.x, v.y); window.__tv.shootPaint(0);

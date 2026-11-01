@@ -1,0 +1,16 @@
+import { createRequire } from 'module'; const { chromium } = createRequire(import.meta.url)(process.env.PWPATH);
+const b = await chromium.launch({ args: ['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--use-gl=swiftshader','--enable-unsafe-swiftshader'] });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const P = await (await b.newContext({ viewport: { width: 1000, height: 640 } })).newPage();
+await P.goto('http://127.0.0.1:8080/tv-heads.html?peerhost=127.0.0.1&peerport=9000'); await sleep(2500);
+await P.screenshot({ path: 'tools/u1.png' });
+await P.fill('#name', 'Luke'); await P.click('#hostBtn'); await P.waitForFunction(() => document.getElementById('roomcode').textContent.length===4); await sleep(1500);
+await P.screenshot({ path: 'tools/u2.png' });
+const M = await (await b.newContext({ viewport: { width: 390, height: 780 }, isMobile: true, hasTouch: true })).newPage();
+await M.goto('http://127.0.0.1:8080/tv-heads.html?peerhost=127.0.0.1&peerport=9000'); await M.fill('#code', await P.textContent('#roomcode')); await M.fill('#name','Bodhi'); await M.click('#joinBtn');
+await M.waitForFunction(() => window.__tv.conns.size === 1, null, {timeout: 20000});
+await P.click('#startRoundBtn'); await sleep(2500);
+await M.screenshot({ path: 'tools/u3.png' });
+await P.evaluate(() => { window.__tv.me.score = 10; }); await sleep(1500);
+await P.screenshot({ path: 'tools/u4.png' });
+await b.close();

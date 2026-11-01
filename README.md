@@ -22,6 +22,9 @@ A zap fills the other player's screen with static and stuns them.
 
 **Proximity voice chat:** you hear other players louder the closer they are (silent beyond ~20 m), panned left/right by where they stand. Headphones avoid echo. A player's name tag glows green while they talk and shows 🔇 when muted.
 
+## Look
+Dark surrealist rubber-hose cartoon in 3D: noodle-limbed TV-head characters with white gloves, big shoes and eyeball antennas; cel shading; an old-film filter (ink outlines, sepia, grain, scratches, flicker, vignette); a checkerboard rooftop under a grinning moon, surrounded by crooked buildings whose windows stare back. Everything is drawn in code.
+
 ## The game
 A blaster battle. Hold the trigger to fire fast – 20 rounds a magazine, then a 1.8 s reload where you can't shoot (it reloads by itself when empty, or press R early to pick your moment); every hit cracks the other player's TV screen – and their own view. Crack a screen 60% (or land 30 hits) to smash it and score. The leader's live face is shown on giant billboards around the arena. The host (👑) sets **first to 5/10/15/20** and starts the first round. When someone wins there's a quick score screen, then everyone respawns at spread-out random spots and the next round starts automatically; the blaster works during warm-up too, but nothing scores until the round starts.
 
