@@ -32,10 +32,11 @@ await M.goto('http://127.0.0.1:8080/tv-heads.html?peerhost=127.0.0.1&peerport=90
 await M.waitForFunction(() => document.getElementById('roomcode').textContent.length===4); await M.click('#closeSettingsBtn'); await sleep(400);
 const cdp = await M.context().newCDPSession(M);
 const tap = async (sel, ms) => { const bb = await M.locator(sel).boundingBox(); await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bb.x + bb.width/2, y: bb.y + bb.height/2, id: 9 }] }); await sleep(ms); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); };
-await tap('#zapBtn', 1500);
-await M.waitForFunction(() => window.__tv.ammo < 20, null, { timeout: 20000 }).catch(() => {});
+await M.keyboard.down('KeyF'); await M.waitForFunction(() => window.__tv.ammo < 20, null, { timeout: 30000 }).catch(() => {}); await M.keyboard.up('KeyF');
+const r0 = await M.evaluate(() => window.__tv.reloadsStarted);
 await tap('#reloadBtn', 120);
-check('phone reload button works', await M.evaluate(() => window.__tv.reloadingNow));
+await M.waitForFunction((r0) => window.__tv.reloadsStarted > r0, r0, { timeout: 20000 }).catch(() => {});
+check('phone reload button works', (await M.evaluate(() => window.__tv.reloadsStarted)) > r0);
 await M.screenshot({ path: 'tools/reload-phone.png' });
 await P.keyboard.down('KeyF'); await sleep(300); await P.screenshot({ path: 'tools/reload-pc.png' }); await P.keyboard.up('KeyF');
 console.log(`${ok} passed, ${bad} failed`, errs);

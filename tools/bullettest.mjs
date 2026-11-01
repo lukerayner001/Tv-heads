@@ -35,8 +35,8 @@ check('A screen cracked (bullet landed)', (await A.evaluate(() => window.__tv.me
 await H.keyboard.down('KeyF'); await sleep(700); await H.keyboard.up('KeyF'); await H.keyboard.down('KeyR'); await sleep(300); await H.keyboard.up('KeyR');
 await B.waitForFunction(() => [...window.__tv.remotes.values()].find(r => r.name === 'Luke')?.reloading, null, { timeout: 5000 }).catch(() => {});
 await sleep(600);
-const seen = await B.evaluate(() => { const p = [...window.__tv.remotes.values()].find(r => r.name === 'Luke'); return { rl: p.reloading, magVis: p.parts.mag.visible, gunTilt: +p.parts.gunInner.rotation.z.toFixed(2) }; });
-check('others see the reload (drum out, gun tipped over)', seen.rl && !seen.magVis && seen.gunTilt > 0.5, JSON.stringify(seen));
+const seen = await B.evaluate(() => { const p = [...window.__tv.remotes.values()].find(r => r.name === 'Luke'); return { rl: p.reloading, dropped: !!p.parts.magDropped, gunTilt: +p.parts.gunInner.rotation.z.toFixed(2) }; });
+check('others see the reload (drum dropped, gun tipped over)', seen.rl && seen.dropped && seen.gunTilt > 0.5, JSON.stringify(seen));
 await H.screenshot({ path: 'tools/b-reload.png' });
 await sleep(3500);
 const after = await B.evaluate(() => { const p = [...window.__tv.remotes.values()].find(r => r.name === 'Luke'); return { rl: p.reloading, magVis: p.parts.mag.visible }; });

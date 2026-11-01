@@ -1,9 +1,13 @@
 import * as THREE from 'three';
 import { Peer } from 'peerjs';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // ---------- helpers ----------
 const $ = (id) => document.getElementById(id);
+const _txt = new Map();
+function setText(id, v) { if (_txt.get(id) !== v) { _txt.set(id, v); $(id).textContent = v; } }
+function setStyle(id, prop, v) { const k = id + '.' + prop; if (_txt.get(k) !== v) { _txt.set(k, v); $(id).style[prop] = v; } }
 const qs = new URLSearchParams(location.search);
 const ARENA = 26;
 const COLORS = [0xe63946, 0x2a9d8f, 0xf4a261, 0x457b9d, 0x9b5de5, 0x06d6a0, 0xffb703, 0xef476f];
@@ -257,7 +261,7 @@ scene.add(fill);
   }
   const wallMat = toon({ map: brickTex, roughness: 0.85 });
   const capMat = toon({ color: 0x3a3d4a, roughness: 0.7 });
-  const bulbGeo = new THREE.SphereGeometry(0.11, 8, 6);
+  const bulbGeo = new THREE.SphereGeometry(0.11, 8, 6), bulbsA = [], bulbsB = [];
   const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffe2a0 }), bulbMat2 = new THREE.MeshBasicMaterial({ color: 0xff9f6b });
   const WH = 3.6;
   [[0, ARENA, ARENA * 2 + 1, 1], [0, -ARENA, ARENA * 2 + 1, 1], [ARENA, 0, 1, ARENA * 2 + 1], [-ARENA, 0, 1, ARENA * 2 + 1]].forEach(([x, z, w, d], i) => {
@@ -275,11 +279,14 @@ scene.add(fill);
     }
     const wire = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 96, 0.025, 4), new THREE.MeshBasicMaterial({ color: 0x111111 }));
     scene.add(wire);
-    for (let k = 1; k < 24; k += 1) {
-      const bulb = new THREE.Mesh(bulbGeo, k % 3 ? bulbMat : bulbMat2);
-      bulb.position.copy(pts[k]); bulb.position.y -= 0.12; scene.add(bulb);
-    }
+    for (let k = 1; k < 24; k += 1) (k % 3 ? bulbsA : bulbsB).push(pts[k].clone().setY(pts[k].y - 0.12));
   });
+  for (const [list, mat] of [[bulbsA, bulbMat], [bulbsB, bulbMat2]]) {
+    const inst = new THREE.InstancedMesh(bulbGeo, mat, list.length);
+    const m4 = new THREE.Matrix4();
+    list.forEach((p, i) => inst.setMatrixAt(i, m4.makeTranslation(p.x, p.y, p.z)));
+    scene.add(inst);
+  }
 }
 
 // obstacles (axis-aligned boxes used for collision)
@@ -446,6 +453,7 @@ function makeLabel(text) {
 
 // ---------- TV-head character ----------
 // ---------- rubber-hose TV-head character ----------
+const TEETH_GEO = mergeGeometries(Array.from({ length: 7 }, (_, i) => new THREE.BoxGeometry(0.1, 0.09 + (i % 2) * 0.03, 0.03).translate(-0.39 + i * 0.13, (i % 2) * 0.01, 0)));
 function makeTVHead(color, name) {
   const g = new THREE.Group();
   const rig = new THREE.Group(); g.add(rig);                 // everything that bounces and squashes
@@ -454,54 +462,62 @@ function makeTVHead(color, name) {
   const glove = toon({ color: 0xf4ecd8 });
   const wood = toon({ color: 0x6b4630 });
   const metal = toon({ color: 0xb9b2a0 });
-  const add = (parent, geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; parent.add(m); return m; };
+  const gm = toon({ color: 0x24211d }), brass = toon({ color: 0xb08d3c });
+  // Parts that never move relative to each other are merged into one mesh per (moving part, material):
+  // the character looks the same but costs the graphics chip ~17 draws instead of ~40.
+  const buckets = new Map(), _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
+  const part = (parent, geo, mat, [x, y, z], [rx, ry, rz] = [0, 0, 0], [sx, sy, sz] = [1, 1, 1], shadow = false) => {
+    const key = parent.uuid + mat.uuid;
+    if (!buckets.has(key)) buckets.set(key, { parent, mat, geos: [], shadow: false });
+    const bk = buckets.get(key);
+    _m4.compose(new THREE.Vector3(x, y, z), _q.setFromEuler(_e.set(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
+    const gg = geo.index ? geo.toNonIndexed() : geo.clone();
+    bk.geos.push(gg.applyMatrix4(_m4));
+    bk.shadow ||= shadow;
+  };
 
   // noodle legs + big round shoes
   const legL = new THREE.Group(); legL.position.set(-0.19, 0.95, 0); rig.add(legL);
   const legR = new THREE.Group(); legR.position.set(0.19, 0.95, 0); rig.add(legR);
   for (const leg of [legL, legR]) {
-    add(leg, new THREE.CapsuleGeometry(0.065, 0.66, 4, 8), ink, 0, -0.42, 0);
-    const shoe = add(leg, new THREE.SphereGeometry(0.2, 14, 10), ink, 0, -0.84, 0.11);
-    shoe.scale.set(1, 0.62, 1.55);
+    part(leg, new THREE.CapsuleGeometry(0.065, 0.66, 4, 8), ink, [0, -0.42, 0], undefined, undefined, true);
+    part(leg, new THREE.SphereGeometry(0.2, 12, 8), ink, [0, -0.84, 0.11], undefined, [1, 0.62, 1.55], true);
   }
   // pear-shaped body with a belt and a bow tie
-  const torso = add(rig, new THREE.SphereGeometry(0.5, 20, 16), body, 0, 1.28, 0);
-  torso.scale.set(1, 1.12, 0.84);
-  const belt = add(rig, new THREE.TorusGeometry(0.43, 0.05, 6, 24), ink, 0, 1.0, 0); belt.rotation.x = Math.PI / 2; belt.scale.set(1, 0.84, 1);
-  for (const sx of [-1, 1]) { const bow = add(rig, new THREE.ConeGeometry(0.11, 0.2, 8), ink, 0.1 * sx, 1.78, 0.3); bow.rotation.z = -sx * Math.PI / 2; }
-  add(rig, new THREE.SphereGeometry(0.05, 8, 6), ink, 0, 1.78, 0.33);
+  part(rig, new THREE.SphereGeometry(0.5, 16, 12), body, [0, 1.28, 0], undefined, [1, 1.12, 0.84], true);
+  part(rig, new THREE.TorusGeometry(0.43, 0.05, 6, 24), ink, [0, 1.0, 0], [Math.PI / 2, 0, 0], [1, 0.84, 1]);
+  for (const sx of [-1, 1]) part(rig, new THREE.ConeGeometry(0.11, 0.2, 8), ink, [0.1 * sx, 1.78, 0.3], [0, 0, -sx * Math.PI / 2]);
+  part(rig, new THREE.SphereGeometry(0.05, 8, 6), ink, [0, 1.78, 0.33]);
+  part(rig, new THREE.CylinderGeometry(0.07, 0.09, 0.32, 8), ink, [0, 1.86, 0]);
   // rubber-hose arms ending in white cartoon gloves (pivot at the shoulder)
   const makeArm = (side) => {
     const pivot = new THREE.Group(); pivot.position.set(0.5 * side, 1.56, 0); rig.add(pivot);
-    add(pivot, new THREE.CapsuleGeometry(0.055, 0.56, 4, 8), ink, 0, -0.34, 0);
-    add(pivot, new THREE.CylinderGeometry(0.11, 0.1, 0.09, 12), glove, 0, -0.64, 0);
-    const hand = add(pivot, new THREE.SphereGeometry(0.15, 12, 10), glove, 0, -0.76, 0.02);
-    hand.scale.set(1, 0.92, 1.12);
+    part(pivot, new THREE.CapsuleGeometry(0.055, 0.56, 4, 8), ink, [0, -0.34, 0], undefined, undefined, true);
+    part(pivot, new THREE.CylinderGeometry(0.11, 0.1, 0.09, 12), glove, [0, -0.64, 0]);
+    part(pivot, new THREE.SphereGeometry(0.15, 12, 10), glove, [0, -0.76, 0.02], undefined, [1, 0.92, 1.12]);
     return pivot;
   };
   const armL = makeArm(1), armR = makeArm(-1);   // facing +z, the character's right is -x
-  add(rig, new THREE.CylinderGeometry(0.07, 0.09, 0.32, 8), ink, 0, 1.86, 0);
 
   // the TV: a rounded wooden set with a toothy grin under the screen
   const tvY = 2.42;
-  add(rig, new RoundedBoxGeometry(1.5, 1.3, 1.0, 3, 0.16), wood, 0, tvY, 0);
-  add(rig, new THREE.BoxGeometry(1.26, 0.98, 0.04), ink, 0, tvY + 0.08, 0.49);
+  part(rig, new RoundedBoxGeometry(1.5, 1.3, 1.0, 3, 0.16), wood, [0, tvY, 0], undefined, undefined, true);
+  part(rig, new THREE.BoxGeometry(1.26, 0.98, 0.04), ink, [0, tvY + 0.08, 0.49]);
+  part(rig, new THREE.BoxGeometry(0.92, 0.15, 0.03), ink, [0, tvY - 0.5, 0.49]);
+  part(rig, TEETH_GEO, glove, [0, tvY - 0.49, 0.505]);
+  for (const sx of [-1, 1]) part(rig, new THREE.CylinderGeometry(0.06, 0.06, 0.05, 10), metal, [0.68 * sx, tvY - 0.35, 0.45], [Math.PI / 2, 0, 0]);
   const screenMat = makeScreenMaterial();
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.86), screenMat);
   screen.position.set(0, tvY + 0.08, 0.515);
   rig.add(screen);
-  add(rig, new THREE.BoxGeometry(0.92, 0.15, 0.03), ink, 0, tvY - 0.5, 0.49);
-  for (let i = 0; i < 7; i++) add(rig, new THREE.BoxGeometry(0.1, 0.09 + (i % 2) * 0.03, 0.03), glove, -0.39 + i * 0.13, tvY - 0.49 + (i % 2) * 0.01, 0.505);
-  for (const sx of [-1, 1]) add(rig, new THREE.CylinderGeometry(0.06, 0.06, 0.05, 10), metal, 0.68 * sx, tvY - 0.35, 0.45).rotation.x = Math.PI / 2;
   // antennas with goggling eyeballs on the tips
   const ants = new THREE.Group(); ants.position.y = tvY + 0.62; rig.add(ants);
   for (const sx of [-1, 1]) {
-    const a = add(ants, new THREE.CylinderGeometry(0.02, 0.025, 0.8, 6), ink, 0.2 * sx, 0.36, 0);
-    a.rotation.z = -0.5 * sx;
-    add(ants, new THREE.SphereGeometry(0.12, 12, 10), glove, 0.4 * sx, 0.74, 0);
-    add(ants, new THREE.SphereGeometry(0.055, 8, 6), ink, 0.4 * sx, 0.74, 0.09);
+    part(ants, new THREE.CylinderGeometry(0.02, 0.025, 0.8, 6), ink, [0.2 * sx, 0.36, 0], [0, 0, -0.5 * sx]);
+    part(ants, new THREE.SphereGeometry(0.12, 12, 10), glove, [0.4 * sx, 0.74, 0]);
+    part(ants, new THREE.SphereGeometry(0.055, 8, 6), ink, [0.4 * sx, 0.74, 0.09]);
   }
-  add(ants, new THREE.SphereGeometry(0.1, 10, 8), ink, 0, 0, 0);
+  part(ants, new THREE.SphereGeometry(0.1, 10, 8), ink, [0, 0, 0]);
   const label = makeLabel(name || 'Player');
   label.position.y = 3.75;
   g.add(label);
@@ -509,14 +525,20 @@ function makeTVHead(color, name) {
   // vintage ray-gun-style blaster held in the right glove (+z = barrel, -y = grip)
   const gun = new THREE.Group(); gun.position.set(0, -0.8, 0.04); gun.rotation.x = Math.PI / 2; gun.visible = false; armR.add(gun);
   const gunInner = new THREE.Group(); gun.add(gunInner);
-  const gm = toon({ color: 0x24211d }), brass = toon({ color: 0xb08d3c });
-  const recv = add(gunInner, new THREE.SphereGeometry(0.14, 12, 10), gm, 0, 0.02, 0.06); recv.scale.set(0.9, 0.95, 1.7);
-  const barrel = add(gunInner, new THREE.CylinderGeometry(0.05, 0.06, 0.5, 10), gm, 0, 0.04, 0.38); barrel.rotation.x = Math.PI / 2;
-  for (const z of [0.24, 0.34, 0.44]) add(gunInner, new THREE.TorusGeometry(0.075, 0.022, 6, 14), brass, 0, 0.04, z);
-  const bell = add(gunInner, new THREE.ConeGeometry(0.11, 0.16, 12, 1, true), brass, 0, 0.04, 0.66); bell.rotation.x = -Math.PI / 2;
-  const grip = add(gunInner, new THREE.BoxGeometry(0.08, 0.24, 0.11), gm, 0, -0.14, -0.04); grip.rotation.x = 0.35;
-  const mag = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.1, 14), brass); mag.rotation.z = Math.PI / 2; mag.position.set(0, -0.12, 0.16); mag.castShadow = true; gunInner.add(mag);
+  part(gunInner, new THREE.SphereGeometry(0.14, 12, 10), gm, [0, 0.02, 0.06], undefined, [0.9, 0.95, 1.7]);
+  part(gunInner, new THREE.CylinderGeometry(0.05, 0.06, 0.5, 10), gm, [0, 0.04, 0.38], [Math.PI / 2, 0, 0]);
+  part(gunInner, new THREE.BoxGeometry(0.08, 0.24, 0.11), gm, [0, -0.14, -0.04], [0.35, 0, 0]);
+  for (const z of [0.24, 0.34, 0.44]) part(gunInner, new THREE.TorusGeometry(0.075, 0.022, 6, 14), brass, [0, 0.04, z]);
+  part(gunInner, new THREE.ConeGeometry(0.11, 0.16, 12, 1, true), brass, [0, 0.04, 0.66], [-Math.PI / 2, 0, 0]);
+  const mag = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.1, 14), brass); mag.rotation.z = Math.PI / 2; mag.position.set(0, -0.12, 0.16); gunInner.add(mag);
   const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.04, 0.76); gunInner.add(muzzle);
+
+  for (const bk of buckets.values()) {
+    const mesh = new THREE.Mesh(mergeGeometries(bk.geos), bk.mat);
+    mesh.castShadow = bk.shadow;
+    bk.parent.add(mesh);
+    for (const gg of bk.geos) gg.dispose();
+  }
   return { group: g, rig, screenMat, screen, legL, legR, armL, armR, ants, label, gun, gunInner, mag, muzzle, recoil: 0 };
 }
 
@@ -1952,7 +1974,7 @@ function shootPaint(power = 0) {
 
 function updateBalls(dt) {
   gunHeat = Math.max(0, gunHeat - dt * 1.4);
-  crosshair.style.transform = `scale(${(me.aiming ? 0.6 : 1) * (1 + gunHeat * 0.8)})`;
+  setStyle('crosshair', 'transform', `scale(${(Math.round((me.aiming ? 0.6 : 1) * (1 + gunHeat * 0.8) * 20) / 20)})`);
 }
 
 function onPaintData(p, m) {
@@ -2006,14 +2028,15 @@ const filmMat = new THREE.ShaderMaterial({
       float de = 0.0;
       #ifndef NO_DEPTH_INK
       float dc = max(lin(texture2D(tDepth, uv).r), 0.05);
-      float dx = abs(lin(texture2D(tDepth, uv + vec2(px.x, 0.0)).r) - lin(texture2D(tDepth, uv - vec2(px.x, 0.0)).r));
-      float dy = abs(lin(texture2D(tDepth, uv + vec2(0.0, px.y)).r) - lin(texture2D(tDepth, uv - vec2(0.0, px.y)).r));
+      float dx = abs(lin(texture2D(tDepth, uv + vec2(px.x, 0.0)).r) - dc) * 2.0;
+      float dy = abs(lin(texture2D(tDepth, uv + vec2(0.0, px.y)).r) - dc) * 2.0;
       de = smoothstep(0.035, 0.09, min((dx + dy) / dc, 10.0)) * (1.0 - smoothstep(60.0, 140.0, dc));
       #endif
-      float lx = L(uv + vec2(px.x, 0.0)) - L(uv - vec2(px.x, 0.0)), ly = L(uv + vec2(0.0, px.y)) - L(uv - vec2(0.0, px.y));
+      vec3 col = srgb(texture2D(tColor, uv).rgb);
+      float lc = dot(col, vec3(0.299, 0.587, 0.114));
+      float lx = (L(uv + vec2(px.x, 0.0)) - lc) * 2.0, ly = (L(uv + vec2(0.0, px.y)) - lc) * 2.0;
       float le = smoothstep(0.16, 0.38, length(vec2(lx, ly)));
       float ink = max(de, le * 0.75);
-      vec3 col = srgb(texture2D(tColor, uv).rgb);
       // sepia grade with a whisper of colour, crushed blacks, punchy contrast
       float g = dot(col, vec3(0.299, 0.587, 0.114));
       vec3 sep = vec3(g * 1.08, g * 0.94, g * 0.74);
@@ -2052,6 +2075,22 @@ function renderFilm(time) {
   renderer.render(filmScene, filmCam);
 }
 
+// ---------- automatic resolution ----------
+let ftAvg = 16, ftBest = 16, dynT = 0;
+const maxPR = Math.min(devicePixelRatio, safeGfx ? 1 : isTouch ? 1.5 : 2);
+const minPR = Math.min(maxPR, isTouch ? 0.65 : 0.8);
+function adaptResolution(dtMs) {
+  if (dtMs <= 0 || dtMs > 200 || document.hidden) return;
+  ftAvg += (dtMs - ftAvg) * 0.05;
+  ftBest = Math.min(ftBest + 0.002, ftAvg);                 // the device's normal frame time (60 / 90 / 120 Hz, or a 30 fps cap)
+  if ((dynT += dtMs) < 2000) return;
+  dynT = 0;
+  let pr = renderer.getPixelRatio();
+  if (ftAvg > ftBest * 1.35 && pr > minPR) pr = Math.max(minPR, pr - 0.15);
+  else if (ftAvg < ftBest * 1.08 && pr < maxPR) pr = Math.min(maxPR, pr + 0.1);
+  if (pr !== renderer.getPixelRatio()) { renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); }
+}
+
 // ---------- graphics health check ----------
 // If the 3D view comes out solid white (a driver bug), switch to simple graphics and reload.
 let gfxNext = 3000, gfxWhite = 0;
@@ -2059,7 +2098,8 @@ const px = new Uint8Array(4);
 let gfxBlack = 0;
 function gfxCheck(now) {
   if (now < gfxNext || !started) return;
-  gfxNext = now + (now < 60000 ? 1500 : 3000);
+  gfxNext = now + (now < 60000 ? 2000 : 12000);
+  if (document.hidden) return;
   const gl = renderer.getContext();
   const w = useFilm ? filmRT.width : gl.drawingBufferWidth, h = useFilm ? filmRT.height : gl.drawingBufferHeight;
   let white = 0, sceneDark = 0;
@@ -2124,11 +2164,12 @@ function updateDecor(time, dt) {
 
 // ---------- ammo & reloading ----------
 const MAG = 20, RELOAD_MS = 1800;
-let ammo = MAG, reloadUntil = 0, lastDryClick = 0;
+let ammo = MAG, reloadUntil = 0, lastDryClick = 0, reloadsStarted = 0;
 const reloading = () => reloadUntil > 0;           // stays true until the mag is actually refilled
 function startReload(now) {
   if (reloading() || ammo >= MAG) return;
   reloadUntil = now + RELOAD_MS;
+  reloadsStarted++;
   sfx('reload');
 }
 function refill() { ammo = MAG; reloadUntil = 0; }
@@ -2142,8 +2183,8 @@ function updateReload(now, inp, trigger) {
   const r = reloading();
   el.classList.toggle('reloading', r);
   el.classList.toggle('low', !r && ammo <= 5);
-  $('ammoCount').textContent = r ? 'RELOADING' : `${ammo} / ${MAG}`;
-  $('ammoBar').style.width = (r ? (1 - (reloadUntil - now) / RELOAD_MS) : ammo / MAG) * 100 + '%';
+  setText('ammoCount', r ? 'RELOADING' : `${ammo} / ${MAG}`);
+  setStyle('ammoBar', 'width', Math.round((r ? (1 - (reloadUntil - now) / RELOAD_MS) : ammo / MAG) * 50) * 2 + '%');
   crosshair.classList.toggle('dim', r);
 }
 
@@ -2261,7 +2302,8 @@ const lookAt = new THREE.Vector3();
 
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const rawDt = now - last;
+  const dt = Math.min(0.05, rawDt / 1000);
   last = now;
   const time = now / 1000;
 
@@ -2327,9 +2369,9 @@ function frame(now) {
     mu.power.value += ((ko ? 0 : 1) - mu.power.value) * Math.min(1, dt * 6);
     setOpacity(meParts, me.hidden ? 0.3 : adsT > 0.5 ? 0.45 : 1);
     $('selfwrap').classList.toggle('ghost', me.hidden);
-    $('hearts').textContent = cfg.gun
+    setText('hearts', cfg.gun
       ? (ko ? '💥 Screen smashed!' : `🔫 Screen ${Math.round(screenDamage(mePaint || { coverage: 0, hits: 0 }) * 100)}% damaged`)
-      : cfg.damage ? (ko ? '💥 KO' : '❤️'.repeat(Math.max(0, me.hp))) : '';
+      : cfg.damage ? (ko ? '💥 KO' : '❤️'.repeat(Math.max(0, me.hp))) : '');
     $('selfwrap').classList.toggle('stunned', stunned);
 
     // camera follow
@@ -2416,7 +2458,7 @@ function frame(now) {
     if (b.life <= 0) { scene.remove(b.m); if (!b.shared) b.m.geometry.dispose(); b.m.material.dispose(); beams.splice(i, 1); }
   }
 
-  if (!qs.has('norender')) { renderFilm(time); gfxCheck(now); }
+  if (!qs.has('norender')) { renderFilm(time); gfxCheck(now); adaptResolution(rawDt); }
 }
 requestAnimationFrame(frame);
 
@@ -2427,4 +2469,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { get useFilm() { return useFilm; }, get bulletsInFlight() { return bullets.length; }, muzzlePos, get meParts() { return meParts; }, get ammo() { return ammo; }, get reloadingNow() { return reloading(); }, spotClear, gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { get reloadsStarted() { return reloadsStarted; }, drawStats: () => { renderer.info.autoReset = false; renderer.info.reset(); renderFilm(performance.now() / 1000); const r = { calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; renderer.info.autoReset = true; return r; }, get pixelRatio() { return renderer.getPixelRatio(); }, get useFilm() { return useFilm; }, get bulletsInFlight() { return bullets.length; }, muzzlePos, get meParts() { return meParts; }, get ammo() { return ammo; }, get reloadingNow() { return reloading(); }, spotClear, gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
