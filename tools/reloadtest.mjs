@@ -1,0 +1,41 @@
+import { createRequire } from 'module'; const { chromium } = createRequire(import.meta.url)(process.env.PWPATH);
+const b = await chromium.launch({ args: ['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--use-gl=swiftshader','--enable-unsafe-swiftshader'] });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let ok=0, bad=0; const check=(n,c,i='')=>{ c?ok++:bad++; console.log((c?'PASS ':'FAIL ')+n, i); };
+const P = await (await b.newContext({ viewport: { width: 900, height: 600 } })).newPage(); const errs=[]; P.on('pageerror', e => errs.push(e.message));
+await P.goto('http://127.0.0.1:8080/tv-heads.html?peerhost=127.0.0.1&peerport=9000');
+await P.click('#hostBtn'); await P.waitForFunction(() => document.getElementById('roomcode').textContent.length===4);
+await P.click('#closeSettingsBtn'); await sleep(500);
+const st = () => P.evaluate(() => ({ ammo: window.__tv.ammo, rl: window.__tv.reloadingNow, txt: document.getElementById('ammoCount').textContent, shown: !document.getElementById('ammo').classList.contains('hidden') }));
+check('ammo counter shown, full mag', (await st()).ammo === 20 && (await st()).shown, JSON.stringify(await st()));
+// hold the trigger until the mag runs dry
+await P.keyboard.down('KeyF');
+await P.waitForFunction(() => window.__tv.reloadingNow, null, { timeout: 30000 });
+const dry = await st();
+check('holding fire empties the mag and auto-reloads', dry.ammo === 0 && dry.rl && dry.txt === 'RELOADING', JSON.stringify(dry));
+await sleep(900);
+check('cannot fire while reloading (trigger still held)', (await st()).ammo === 0 && (await st()).rl);
+await P.waitForFunction(() => !window.__tv.reloadingNow, null, { timeout: 6000 });
+const t1 = await st();
+check('reload completes after ~1.8s', t1.ammo >= 18, JSON.stringify(t1));
+await P.keyboard.up('KeyF'); await sleep(200);
+// a few shots then manual reload with R
+await P.keyboard.down('KeyF'); await sleep(1500); await P.keyboard.up('KeyF');
+const part = (await st()).ammo;
+await P.keyboard.press('KeyR'); await sleep(200);
+check('R starts a reload on a part-used mag', part < 20 && (await st()).rl, 'ammo was ' + part);
+await sleep(1900);
+check('back to a full mag', (await st()).ammo === 20 && !(await st()).rl);
+// phone reload button
+const M = await (await b.newContext({ viewport: { width: 390, height: 780 }, isMobile: true, hasTouch: true })).newPage();
+await M.goto('http://127.0.0.1:8080/tv-heads.html?peerhost=127.0.0.1&peerport=9000'); await M.click('#hostBtn');
+await M.waitForFunction(() => document.getElementById('roomcode').textContent.length===4); await M.click('#closeSettingsBtn'); await sleep(400);
+const cdp = await M.context().newCDPSession(M);
+const tap = async (sel, ms) => { const bb = await M.locator(sel).boundingBox(); await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bb.x + bb.width/2, y: bb.y + bb.height/2, id: 9 }] }); await sleep(ms); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); };
+await tap('#zapBtn', 1500);
+await tap('#reloadBtn', 120);
+check('phone reload button works', await M.evaluate(() => window.__tv.reloadingNow));
+await M.screenshot({ path: 'tools/reload-phone.png' });
+await P.keyboard.down('KeyF'); await sleep(300); await P.screenshot({ path: 'tools/reload-pc.png' }); await P.keyboard.up('KeyF');
+console.log(`${ok} passed, ${bad} failed`, errs);
+await b.close();

@@ -715,7 +715,7 @@ function onData(from, m) {
       if (!p.seen) { p.pos.set(m.x, 0, m.z); p.rot = m.r; p.seen = true; }
       p.stunned = !!m.st;
       if (!!m.mu !== !!p.muted) setLabel(p, p.name, !!m.mu);
-      p.hp = m.hp ?? MAX_HP; p.ko = !!m.ko; p.hidden = !!m.hd;
+      p.hp = m.hp ?? MAX_HP; p.ko = !!m.ko; p.hidden = !!m.hd; p.reloading = !!m.rl;
       { const sc = m.rd === roundId ? (m.sc | 0) : 0; if (p.score !== sc) { p.score = sc; updateScores(); } }
       break;
     case 'zap':
@@ -975,12 +975,13 @@ addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   keys.add(e.code);
   if (e.code === 'KeyM' && started && !e.repeat) setMic(!micMuted);
+  if (e.code === 'KeyR' && !e.repeat) reloadQueued = true;          // a quick tap always counts
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 
-let touchLookDX = 0, touchLookDY = 0;
+let touchLookDX = 0, touchLookDY = 0, reloadQueued = false;
 const touch = { x: 0, y: 0, zap: false, jump: false, aim: false };
 {
   // floating joystick: put your thumb down anywhere on the left side
@@ -1022,8 +1023,8 @@ const touch = { x: 0, y: 0, zap: false, jump: false, aim: false };
   const lend = (e) => { if (e.pointerId === lid) lid = null; };
   look.addEventListener('pointerup', lend); look.addEventListener('pointercancel', lend);
 
-  for (const [btn, k] of [[$('zapBtn'), 'zap'], [$('jumpBtn'), 'jump']]) {
-    btn.addEventListener('pointerdown', (e) => { e.preventDefault(); btn.setPointerCapture(e.pointerId); touch[k] = true; btn.classList.add('down'); });
+  for (const [btn, k] of [[$('zapBtn'), 'zap'], [$('jumpBtn'), 'jump'], [$('reloadBtn'), 'reload']]) {
+    btn.addEventListener('pointerdown', (e) => { e.preventDefault(); btn.setPointerCapture(e.pointerId); touch[k] = true; if (k === 'reload') reloadQueued = true; btn.classList.add('down'); });
     const up = () => { touch[k] = false; btn.classList.remove('down'); };
     btn.addEventListener('pointerup', up); btn.addEventListener('pointercancel', up);
   }
@@ -1060,6 +1061,7 @@ function readInput() {
   if (keys.has('Space')) jump = true;
   if (keys.has('ShiftLeft') || keys.has('ShiftRight')) sprint = true;
   if (keys.has('KeyQ')) aim = true;
+  let reload = keys.has('KeyR');
   for (const gp of navigator.getGamepads ? navigator.getGamepads() : []) {
     if (!gp) continue;
     const dz = (v) => (Math.abs(v) < 0.18 ? 0 : v);
@@ -1067,14 +1069,16 @@ function readInput() {
     strafe += dz(gp.axes[0] || 0);
     lookX += dz(gp.axes[2] || 0); lookY += dz(gp.axes[3] || 0);
     if (gp.buttons[0]?.pressed) jump = true;
-    if (gp.buttons[7]?.pressed || gp.buttons[5]?.pressed || gp.buttons[2]?.pressed) zap = true;
+    if (gp.buttons[7]?.pressed || gp.buttons[5]?.pressed) zap = true;
+    if (gp.buttons[2]?.pressed) reload = true;
     if (gp.buttons[6]?.pressed || gp.buttons[4]?.pressed) aim = true;
     if (gp.buttons[10]?.pressed || gp.buttons[1]?.pressed) sprint = true;
   }
   fwd += -touch.y; strafe += touch.x;
   zap ||= touch.zap || mouseFire;
+  reload ||= touch.reload || reloadQueued; reloadQueued = false;
   jump ||= touch.jump; aim ||= mouseAim || touch.aim;
-  return { fwd: Math.max(-1, Math.min(1, fwd)), strafe: Math.max(-1, Math.min(1, strafe)), lookX, lookY, zap, jump, aim, sprint };
+  return { fwd: Math.max(-1, Math.min(1, fwd)), strafe: Math.max(-1, Math.min(1, strafe)), lookX, lookY, zap, jump, aim, sprint, reload };
 }
 
 // ---------- zap beams ----------
@@ -1396,6 +1400,7 @@ function roundSpawn(seed) {
   respawn(new THREE.Vector3(x, 0, z));
 }
 function respawn(at) {
+  refill();
   me.pos.copy(at || pickSpawn());
   collide(me.pos);
   me.rot = Math.atan2(-me.pos.x, -me.pos.z);                     // face the middle of the roof
@@ -1725,7 +1730,11 @@ function sfx(kind) {
   const src = audioCtx.createBufferSource(); src.buffer = noiseBuf;
   const f = audioCtx.createBiquadFilter(); const gn = audioCtx.createGain();
   const t = audioCtx.currentTime;
-  if (kind === 'shot') { f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 0.7; gn.gain.setValueAtTime(0.18, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.07); }
+  if (kind === 'click' || kind === 'reload') {
+    f.type = 'highpass'; f.frequency.value = kind === 'click' ? 3500 : 1800;
+    gn.gain.setValueAtTime(kind === 'click' ? 0.12 : 0.22, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+    if (kind === 'reload') { gn.gain.setValueAtTime(0.22, t + 0.09); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.13); }
+  } else if (kind === 'shot') { f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 0.7; gn.gain.setValueAtTime(0.18, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.07); }
   else { f.type = 'highpass'; f.frequency.value = 2500; gn.gain.setValueAtTime(0.35, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.18); }
   src.connect(f); f.connect(gn); gn.connect(audioCtx.destination);
   src.start(t); src.stop(t + 0.25);
@@ -1900,6 +1909,31 @@ function updateDecor(time, dt) {
   if (decorT <= 0) decorT = 5 + Math.random() * 4;
 }
 
+// ---------- ammo & reloading ----------
+const MAG = 20, RELOAD_MS = 1800;
+let ammo = MAG, reloadUntil = 0, lastDryClick = 0;
+const reloading = () => reloadUntil > 0;           // stays true until the mag is actually refilled
+function startReload(now) {
+  if (reloading() || ammo >= MAG) return;
+  reloadUntil = now + RELOAD_MS;
+  sfx('reload');
+}
+function refill() { ammo = MAG; reloadUntil = 0; }
+function updateReload(now, inp, trigger) {
+  if (!paintOn()) { $('ammo').classList.add('hidden'); return; }
+  if (reloadUntil && now >= reloadUntil) { reloadUntil = 0; ammo = MAG; sfx('reload'); }
+  if (inp.reload) startReload(now);
+  if (trigger && (reloading() || ammo <= 0) && now - lastDryClick > 350) { lastDryClick = now; sfx('click'); if (ammo <= 0) startReload(now); }
+  const el = $('ammo');
+  el.classList.remove('hidden');
+  const r = reloading();
+  el.classList.toggle('reloading', r);
+  el.classList.toggle('low', !r && ammo <= 5);
+  $('ammoCount').textContent = r ? 'RELOADING' : `${ammo} / ${MAG}`;
+  $('ammoBar').style.width = (r ? (1 - (reloadUntil - now) / RELOAD_MS) : ammo / MAG) * 100 + '%';
+  crosshair.classList.toggle('dim', r);
+}
+
 // ---------- animate ----------
 function animateBody(parts, walk, speed) {
   const a = Math.sin(walk) * 0.6 * speed;
@@ -1959,12 +1993,13 @@ function frame(now) {
     let fire = inp.zap || fireQueued;
     fireQueued = false;
     if (cfg.mouth && playing() && facePresent()) fire = (paintOn() ? faceState.jaw > 0.45 : mouthFire()) && !ko;   // mouth replaces the button
-    if (fire && me.zapCooldown <= 0 && !stunned && !ko) {
+    if (fire && me.zapCooldown <= 0 && !stunned && !ko && !(paintOn() && (reloading() || ammo <= 0))) {
       const power = cfg.shout && playing() ? loud : 0;
       me.rot = camYaw; me.lastShot = now;               // shots go where the crosshair is
-      if (paintOn()) { me.zapCooldown = 0.1; shootPaint(power); }
+      if (paintOn()) { me.zapCooldown = 0.1; shootPaint(power); ammo--; if (ammo <= 0) startReload(now); }
       else { me.zapCooldown = 0.6; tryZap(power); }
     }
+    updateReload(now, inp, fire && !ko);
     crosshair.classList.toggle('hidden', !started || overlayOpen());
     updateLaugh(now);
     updateFreeze(now, inp);
@@ -1974,7 +2009,7 @@ function frame(now) {
     meParts.group.rotation.y = me.rot;
     animateBody(meParts, me.walk, moveAmt);
     meParts.gun.visible = paintOn();
-    if (paintOn()) { meParts.armR.rotation.x = -1.45; meParts.armL.rotation.x = -1.2; }
+    if (paintOn()) { const rl = reloading(); meParts.armR.rotation.x = rl ? -0.55 : -1.45; meParts.armL.rotation.x = rl ? -0.9 : -1.2; meParts.gun.rotation.x = rl ? 0.6 : 0; }
     const mu = meParts.screenMat.uniforms;
     mu.staticAmt.value = stunned ? 0.75 : 0;
     mu.time.value = time;
@@ -2012,7 +2047,7 @@ function frame(now) {
     if (sendTimer > 1 / 15) {
       sendTimer = 0;
       broadcast({ t: 's', x: +me.pos.x.toFixed(2), z: +me.pos.z.toFixed(2), r: +me.rot.toFixed(3), y: +me.y.toFixed(2), st: now < me.stunUntil ? 1 : 0, sc: me.score, mu: micMuted || !micTrack ? 1 : 0,
-        hp: me.hp, ko: now < me.koUntil ? 1 : 0, hd: me.hidden ? 1 : 0, rd: roundId });
+        hp: me.hp, ko: now < me.koUntil ? 1 : 0, hd: me.hidden ? 1 : 0, rl: reloading() ? 1 : 0, rd: roundId });
     }
   } else {
     // lobby: slow orbit
@@ -2034,7 +2069,7 @@ function frame(now) {
     p.parts.group.visible = p.seen;
     animateBody(p.parts, p.walk, Math.min(1, sp / 7));
     p.parts.gun.visible = paintOn();
-    if (paintOn()) { p.parts.armR.rotation.x = -1.45; p.parts.armL.rotation.x = -1.2; }
+    if (paintOn()) { p.parts.armR.rotation.x = p.reloading ? -0.55 : -1.45; p.parts.armL.rotation.x = p.reloading ? -0.9 : -1.2; p.parts.gun.rotation.x = p.reloading ? 0.6 : 0; }
     const u = p.parts.screenMat.uniforms;
     u.time.value = time;
     u.staticAmt.value = p.stunned ? 0.75 : (u.hasVideo.value ? 0 : 0.15);
@@ -2080,4 +2115,4 @@ addEventListener('resize', () => {
 });
 
 // expose a little for testing
-window.__tv = { spotClear, gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };
+window.__tv = { get ammo() { return ammo; }, get reloadingNow() { return reloading(); }, spotClear, gpuName, safeGfx, get decals() { return decals.length; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, set camPitch(v) { camPitch = v; }, camera, aim, get mePaint() { return mePaint; }, shootPaint, calls, remotes, me, conns, startRound, get cfg() { return cfg; }, get roundId() { return roundId; }, get roundState() { return roundState; }, get zapPhotos() { return zapPhotos; }, get freeze() { return freeze; }, callFreeze, faceState, get face() { return face; }, get holdingDoor() { return holdingDoor; }, get peer() { return peer; }, get audioCtx() { return audioCtx; } };

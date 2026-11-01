@@ -60,6 +60,7 @@
   #zapBtn { right: 22px; bottom: calc(max(22px, env(safe-area-inset-bottom)) + 70px); width: 92px; height: 92px; background: #e63946; color: #fff; font-size: 26px; }
   #aimBtn { right: 124px; bottom: calc(max(22px, env(safe-area-inset-bottom)) + 120px); width: 64px; height: 64px; background: #2a9d8f; }
   #aimBtn.on { background: #ffb703; color: #222; }
+  #reloadBtn { right: 124px; bottom: calc(max(22px, env(safe-area-inset-bottom)) + 30px); width: 60px; height: 60px; background: #6c5ce7; font-size: 24px; }
   #jumpBtn { right: 30px; bottom: max(14px, env(safe-area-inset-bottom)); width: 60px; height: 60px; background: #457b9d; font-size: 12px; }
   @media (pointer: coarse) { .keys { display: none; } #selfwrap { width: 96px; } }
   #paintView { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .93; }
@@ -74,6 +75,14 @@
   #gfxMsg { position: fixed; left: 50%; top: 40%; transform: translateX(-50%); background: #262b55; border: 3px solid #e63946; border-radius: 14px; padding: 14px 18px; text-align: center; z-index: 20; max-width: 90%; }
   #gfxMsg small { color: #a9b0ef; }
   #gfxMsg button { margin-top: 10px; background: #e63946; padding: 8px 16px; }
+  #ammo { position: absolute; right: 14px; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 40px); background: rgba(0,0,0,.55); border-radius: 10px; padding: 6px 12px; min-width: 120px; text-align: right; font-weight: 800; font-size: 20px; }
+  #ammo .ammobar { height: 5px; background: rgba(255,255,255,.15); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+  #ammoBar { height: 100%; width: 100%; background: #ffd166; }
+  #ammo.low #ammoCount { color: #ff6b6b; }
+  #ammo.reloading #ammoCount { color: #8ecae6; font-size: 15px; letter-spacing: 1px; }
+  #ammo.reloading #ammoBar { background: #8ecae6; }
+  #crosshair.dim { opacity: .35; }
+  @media (pointer: coarse) { #ammo { right: 14px; bottom: calc(max(22px, env(safe-area-inset-bottom)) + 172px); font-size: 16px; min-width: 96px; text-align: center; } #hearts { font-size: 14px; } }
   /* rounds + features */
   #chips { position: absolute; top: calc(max(10px, env(safe-area-inset-top)) + 52px); left: 10px; background: rgba(0,0,0,.45); border-radius: 10px; padding: 4px 10px; font-size: 13px; }
   #settingsBtn { padding: 6px 10px; font-size: 15px; background: #444a88; border-radius: 8px; }
@@ -117,6 +126,7 @@
     #chips { top: calc(max(10px, env(safe-area-inset-top)) + 46px); font-size: 12px; }
     #waiting { top: 120px; font-size: 13px; }
     #freeze { font-size: 46px; }
+    #hearts { font-size: 14px; }
   }
 </style>
 </head>
@@ -148,10 +158,11 @@
   <div id="room">Room <span id="roomcode"></span><button id="copyBtn">Copy invite</button><button id="micBtn" title="Mute mic (M)">🎤</button><button id="settingsBtn" class="hidden" title="Round settings">⚙</button></div>
   <div id="chips">Warm-up</div>
   <div id="hearts"></div>
+  <div id="ammo" class="hidden"><span id="ammoCount">20 / 20</span><div class="ammobar"><div id="ammoBar"></div></div></div>
   <div id="loudMeter" class="hidden"><div></div></div>
   <div id="scores"></div>
   <div id="selfwrap"><video id="selfview" muted playsinline autoplay></video></div>
-  <div class="keys">WASD move · mouse look · click shoot · right-click aim · Shift sprint · Space jump · M mute</div>
+  <div class="keys">WASD move · mouse look · click shoot · R reload · right-click aim · Shift sprint · Space jump · M mute</div>
 </div>
 
 <div id="touch" class="hidden">
@@ -160,6 +171,7 @@
   <div id="stick"><div id="knob"></div></div>
   <button class="tbtn" id="aimBtn">AIM</button>
   <button class="tbtn" id="jumpBtn">JUMP</button>
+  <button class="tbtn" id="reloadBtn">⟳</button>
   <button class="tbtn" id="zapBtn">🔫</button>
 </div>
 
